@@ -34,8 +34,7 @@ void example1(void)
 void example2() {
     char a[10];
     int n;
-    assert(a[3] == 800); // FAIL (char cannot be 800)
-    assert(a[3] == 127); // UNKNOWN!
+    assert(a[3] == 800); // UNKNOWN
 
     for(int i=0;i < 10; i++) {
         a[i] = 7;

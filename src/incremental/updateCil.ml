@@ -1,4 +1,8 @@
+(* #cfg updating IDs *)
+
+
 open Cil
+open CompareTypes
 open CompareCIL
 open MaxIdUtil
 open MyCFG

@@ -6,12 +6,13 @@ module Q = Queries
 
 module A = ApronDomain.A
 module ApronComponents = ApronDomain.ApronComponents
+open Apron
 
 open CommonPriv
 
 
 module type S =
-  functor (AD: ApronDomain.S3) ->
+  functor (AD: ApronDomain.S2) ->
   sig
     module D: Lattice.S
     module G: Lattice.S
@@ -33,7 +34,6 @@ module type S =
 
     val sync: Q.ask -> (V.t -> G.t) -> (V.t -> G.t -> unit) -> apron_components_t -> [`Normal | `Join | `Return | `Init | `Thread] -> apron_components_t
 
-    val escape: Node.t -> Q.ask -> (V.t -> G.t) -> (V.t -> G.t -> unit) -> apron_components_t -> EscapeDomain.EscapedVars.t -> apron_components_t
     val enter_multithreaded: Q.ask -> (V.t -> G.t) -> (V.t -> G.t -> unit) -> apron_components_t -> apron_components_t
     val threadenter: Q.ask -> (V.t -> G.t) -> apron_components_t -> apron_components_t
 
@@ -44,30 +44,19 @@ module type S =
     val finalize: unit -> unit
   end
 
-(** Top privatization, which doesn't track globals at all.
-    This is unlike base's "none" privatization. which does track globals, but doesn't privatize them. *)
-module Top: S = functor (AD: ApronDomain.S3) ->
+
+module Dummy: S = functor (AD: ApronDomain.S2) ->
 struct
   module D = Lattice.Unit
   module G = Lattice.Unit
   module V = EmptyV
-  module AV = ApronDomain.V
 
-  type apron_components_t = ApronComponents (AD) (D).t
-
-  let name () = "top"
+  let name () = "Dummy"
   let startstate () = ()
   let should_join _ _ = true
 
-  let read_global ask getg (st: apron_components_t) g x =
-    let apr = st.apr in
-    assert (not (AD.mem_var apr (AV.global g)));
-    apr
-
-  let write_global ?(invariant=false) ask getg sideg (st: apron_components_t) g x: apron_components_t =
-    let apr = st.apr in
-    assert (not (AD.mem_var apr (AV.global g)));
-    st
+  let read_global ask getg st g x = st.ApronDomain.apr
+  let write_global ?(invariant=false) ask getg sideg st g x = st
 
   let lock ask getg st m = st
   let unlock ask getg sideg st m = st
@@ -75,55 +64,10 @@ struct
   let thread_join ask getg exp st = st
   let thread_return ask getg sideg tid st = st
 
-  let escape node ask getg sideg (st:apron_components_t) escaped:apron_components_t =
-    let apr = st.apr in
-    let esc_vars = List.filter (fun var -> match AV.find_metadata var with
-        | Some (Global _) -> false
-        | Some Local ->
-          (let fundec = Node.find_fundec node in
-           let r = AV.to_cil_varinfo fundec var in
-           match r with
-           | Some r -> EscapeDomain.EscapedVars.mem r escaped
-           | _ -> false)
-        | _ -> false
-      ) (AD.vars apr)
-    in
-    let apr_local = AD.remove_vars apr esc_vars in
-    { st with apr = apr_local }
+  let sync ask getg sideg st reason = st
 
-  let sync (ask: Q.ask) getg sideg (st: apron_components_t) reason =
-    match reason with
-    | `Join ->
-      if (ask.f Q.MustBeSingleThreaded) then
-        st
-      else
-        (* must be like enter_multithreaded *)
-        let apr = st.apr in
-        let apr_local = AD.remove_filter apr (fun var ->
-            match AV.find_metadata var with
-            | Some (Global _) -> true
-            | _ -> false
-          )
-        in
-        {st with apr = apr_local}
-    | `Normal
-    | `Init
-    | `Thread
-    | `Return ->
-      st
-
-  let enter_multithreaded ask getg sideg (st: apron_components_t): apron_components_t =
-    let apr = st.apr in
-    let apr_local = AD.remove_filter apr (fun var ->
-        match AV.find_metadata var with
-        | Some (Global _) -> true
-        | _ -> false
-      )
-    in
-    {st with apr = apr_local}
-
-  let threadenter ask getg (st: apron_components_t): apron_components_t =
-    {apr = AD.bot (); priv = startstate ()}
+  let enter_multithreaded ask getg sideg st = st
+  let threadenter ask getg st = st
 
   let init () = ()
   let finalize () = ()
@@ -135,8 +79,8 @@ sig
   val path_sensitive: bool
 end
 
-(** Protection-Based Reading. Is unsound w.r.t. to locals escaping and becoming public. *)
-module ProtectionBasedPriv (Param: ProtectionBasedPrivParam): S = functor (AD: ApronDomain.S3) ->
+(** Protection-Based Reading. *)
+module ProtectionBasedPriv (Param: ProtectionBasedPrivParam): S = functor (AD: ApronDomain.S2) ->
 struct
   include ConfCheck.RequireMutexActivatedInit
   open Protection
@@ -170,7 +114,7 @@ struct
       | Prot of varinfo
 
     let var_name = function
-      | Local x -> x.vname ^ "#" ^ string_of_int(x.vid)
+      | Local g -> g.vname
       | Unprot g -> g.vname ^ "#unprot"
       | Prot g -> g.vname ^ "#prot"
   end
@@ -220,7 +164,7 @@ struct
     let apr = st.apr in
     let (p, w) = st.priv in
     let g_local_var = AV.local g in
-    let x_var = AV.local x in
+    let x_var = Var.of_string x.vname in
     let apr_local =
       if W.mem g w then
         AD.assign_var apr x_var g_local_var
@@ -258,7 +202,7 @@ struct
     let (p, w) = st.priv in
     let g_local_var = AV.local g in
     let g_unprot_var = AV.unprot g in
-    let x_var = AV.local x in
+    let x_var = Var.of_string x.vname in
     let apr_local = AD.add_vars apr [g_local_var] in
     let apr_local = AD.assign_var apr_local g_local_var x_var in
     let apr_side = AD.add_vars apr_local [g_unprot_var] in
@@ -371,8 +315,6 @@ struct
     | `Thread ->
       st
 
-  let escape node ask getg sideg st escaped = (* TODO: Implement *) st
-
   let enter_multithreaded ask getg sideg (st: apron_components_t): apron_components_t =
     let apr = st.apr in
     let (g_vars, gs) =
@@ -403,7 +345,7 @@ struct
   let finalize () = ()
 end
 
-module CommonPerMutex = functor(AD: ApronDomain.S3) ->
+module CommonPerMutex = functor(AD: ApronDomain.S2) ->
 struct
   include Protection
   module V = ApronDomain.V
@@ -426,7 +368,7 @@ struct
 end
 
 (** Per-mutex meet. *)
-module PerMutexMeetPriv : S = functor (AD: ApronDomain.S3) ->
+module PerMutexMeetPriv : S = functor (AD: ApronDomain.S2) ->
 struct
   open CommonPerMutex(AD)
   include MutexGlobals
@@ -463,7 +405,7 @@ struct
     let apr = AD.meet apr (get_mutex_global_g_with_mutex_inits ask getg g) in
     (* read *)
     let g_var = AV.global g in
-    let x_var = AV.local x in
+    let x_var = Var.of_string x.vname in
     let apr_local = AD.add_vars apr [g_var] in
     let apr_local = AD.assign_var apr_local x_var g_var in
     (* unlock *)
@@ -481,7 +423,7 @@ struct
     let apr = AD.meet apr (get_mutex_global_g_with_mutex_inits ask getg g) in
     (* write *)
     let g_var = AV.global g in
-    let x_var = AV.local x in
+    let x_var = Var.of_string x.vname in
     let apr_local = AD.add_vars apr [g_var] in
     let apr_local = AD.assign_var apr_local g_var x_var in
     (* unlock *)
@@ -567,12 +509,6 @@ struct
     let apr_local = AD.remove_vars apr g_vars in (* TODO: side effect initial values to mutex_globals? *)
     {st with apr = apr_local}
 
-  let escape node ask getg sideg (st:apron_components_t) escaped : apron_components_t =
-    let esc_vars = EscapeDomain.EscapedVars.elements escaped in
-    let esc_vars = List.filter (fun v -> not v.vglob && ApronDomain.Tracked.varinfo_tracked v && AD.mem_var st.apr (AV.local v)) esc_vars in
-    let escape_one (x:varinfo) st = write_global ask getg sideg st x x in
-    List.fold_left (fun st v -> escape_one v st) st esc_vars
-
   let threadenter ask getg (st: apron_components_t): apron_components_t =
     {apr = AD.bot (); priv = startstate ()}
 
@@ -587,7 +523,7 @@ struct
   let name () = "W"
 end
 
-module type ClusterArg = functor (AD: ApronDomain.S3) ->
+module type ClusterArg = functor (AD: ApronDomain.S2) ->
 sig
   module LAD: Lattice.S
 
@@ -601,7 +537,7 @@ sig
 end
 
 (** No clustering. *)
-module NoCluster:ClusterArg = functor (AD: ApronDomain.S3) ->
+module NoCluster:ClusterArg = functor (AD: ApronDomain.S2) ->
 struct
   module AD = AD
   open CommonPerMutex(AD)
@@ -684,7 +620,7 @@ end
 
 
 (** Clusters when clustering is downward-closed. *)
-module DownwardClosedCluster (ClusteringArg: ClusteringArg) =  functor (AD: ApronDomain.S3) ->
+module DownwardClosedCluster (ClusteringArg: ClusteringArg) =  functor (AD: ApronDomain.S2) ->
 struct
   module AD = AD
   open CommonPerMutex(AD)
@@ -749,7 +685,7 @@ struct
 end
 
 (** Clusters when clustering is arbitrary (not necessarily downward-closed). *)
-module ArbitraryCluster (ClusteringArg: ClusteringArg): ClusterArg = functor (AD: ApronDomain.S3) ->
+module ArbitraryCluster (ClusteringArg: ClusteringArg): ClusterArg = functor (AD: ApronDomain.S2) ->
 struct
   module AD = AD
   module DCCluster = (DownwardClosedCluster(ClusteringArg))(AD)
@@ -825,7 +761,7 @@ struct
 end
 
 (** Per-mutex meet with TIDs. *)
-module PerMutexMeetPrivTID (Cluster: ClusterArg): S  = functor (AD: ApronDomain.S3) ->
+module PerMutexMeetPrivTID (Cluster: ClusterArg): S  = functor (AD: ApronDomain.S2) ->
 struct
   open CommonPerMutex(AD)
   include MutexGlobals
@@ -969,7 +905,7 @@ struct
     let apr = Cluster.lock apr local_m tmp in
     (* read *)
     let g_var = AV.global g in
-    let x_var = AV.local x in
+    let x_var = Var.of_string x.vname in
     let apr_local = AD.add_vars apr [g_var] in
     let apr_local = AD.assign_var apr_local x_var g_var in
     (* unlock *)
@@ -992,7 +928,7 @@ struct
     let apr = Cluster.lock apr local_m tmp in
     (* write *)
     let g_var = AV.global g in
-    let x_var = AV.local x in
+    let x_var = Var.of_string x.vname in
     let apr_local = AD.add_vars apr [g_var] in
     let apr_local = AD.assign_var apr_local g_var x_var in
     (* unlock *)
@@ -1089,12 +1025,6 @@ struct
     | `Thread ->
       st
 
-  let escape node ask getg sideg (st: apron_components_t) escaped: apron_components_t =
-    let esc_vars = EscapeDomain.EscapedVars.elements escaped in
-    let esc_vars = List.filter (fun v -> not v.vglob && ApronDomain.Tracked.varinfo_tracked v && AD.mem_var st.apr (AV.local v)) esc_vars in
-    let escape_one (x:varinfo) st = write_global ask getg sideg st x x in
-    List.fold_left (fun st v -> escape_one v st) st esc_vars
-
   let enter_multithreaded (ask:Q.ask) getg sideg (st: apron_components_t): apron_components_t =
     let apr = st.apr in
     (* Don't use keep_filter & remove_filter because it would duplicate find_metadata-s. *)
@@ -1122,7 +1052,7 @@ struct
   let finalize () = finalize ()
 end
 
-module TracingPriv = functor (Priv: S) -> functor (AD: ApronDomain.S3) ->
+module TracingPriv = functor (Priv: S) -> functor (AD: ApronDomain.S2) ->
 struct
   module Priv = Priv (AD)
   include Priv
@@ -1236,7 +1166,7 @@ let priv_module: (module S) Lazy.t =
   lazy (
     let module Priv: S =
       (val match get_string "ana.apron.privatization" with
-         | "top" -> (module Top : S)
+         | "dummy" -> (module Dummy : S)
          | "protection" -> (module ProtectionBasedPriv (struct let path_sensitive = false end))
          | "protection-path" -> (module ProtectionBasedPriv (struct let path_sensitive = true end))
          | "mutex-meet" -> (module PerMutexMeetPriv)

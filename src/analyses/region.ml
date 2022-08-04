@@ -150,9 +150,8 @@ struct
     | _ -> au
 
   let special ctx (lval: lval option) (f:varinfo) (arglist:exp list) : D.t =
-    let desc = LibraryFunctions.find f in
-    match desc.special arglist with
-    | Malloc _ | Calloc _ | Realloc _ -> begin
+    match LibraryFunctions.classify f.vname arglist with
+    | `Malloc _ | `Calloc _ | `Realloc _ -> begin
         match ctx.local, lval with
         | `Lifted reg, Some lv ->
           let old_regpart = ctx.global () in

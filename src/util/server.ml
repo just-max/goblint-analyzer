@@ -126,12 +126,12 @@ let virtual_changes file =
 let increment_data (s: t) file reparsed = match Serialize.Cache.get_opt_data SolverData with
   | Some solver_data when reparsed ->
     let changes = CompareCIL.compareCilFiles s.file file in
-    let old_data = Some { Analyses.solver_data } in
+    let old_data = Some ({ Analyses.solver_data }, s.file) in
     s.max_ids <- UpdateCil.update_ids s.file s.max_ids file changes;
     { server = true; Analyses.changes; old_data }, false
   | Some solver_data ->
     let changes = virtual_changes file in
-    let old_data = Some { Analyses.solver_data } in
+    let old_data = Some ({ Analyses.solver_data }, s.file) in
     { server = true; Analyses.changes; old_data }, false
   | _ -> Analyses.empty_increment_data ~server:true (), true
 

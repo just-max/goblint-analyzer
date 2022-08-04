@@ -5,6 +5,8 @@ open GobConfig
 open Printf
 open Goblintutil
 
+let _ = Printexc.record_backtrace true
+
 let writeconffile = ref None
 
 (** Print version and bail. *)
@@ -384,7 +386,7 @@ let reset_stats () =
   Stats.reset SoftwareTimer
 
 (** Perform the analysis over the merged AST.  *)
-let do_analyze change_info merged_AST =
+let do_analyze increment_data merged_AST =
   (* direct the output to file if requested  *)
   if not (get_bool "g2html" || get_string "outfile" = "") then (
     if !Goblintutil.out <> Legacy.stdout then
@@ -413,7 +415,7 @@ let do_analyze change_info merged_AST =
           print_endline @@ "Activated analyses for phase " ^ string_of_int p ^ ": " ^ aa;
           print_endline @@ "Activated transformations for phase " ^ string_of_int p ^ ": " ^ at
         );
-        try Control.analyze change_info ast funs
+        try Control.analyze increment_data ast funs
         with e ->
           let backtrace = Printexc.get_raw_backtrace () in (* capture backtrace immediately, otherwise the following loses it (internal exception usage without raise_notrace?) *)
           let loc = !Tracing.current_loc in
@@ -441,6 +443,7 @@ let do_analyze change_info merged_AST =
     Stats.time "analysis" (do_all_phases merged_AST) funs
   )
 
+(* mxl *)
 let do_html_output () =
   (* TODO: Fpath *)
   let jar = Filename.concat (get_string "exp.g2html_path") "g2html.jar" in
@@ -505,38 +508,45 @@ let handle_extraspecials () =
 (* Detects changes and renames vids and sids. *)
 let diff_and_rename current_file =
   (* Create change info, either from old results, or from scratch if there are no previous results. *)
-  let change_info: Analyses.increment_data =
-    if GobConfig.get_bool "incremental.load" && not (Serialize.results_exist ()) then begin
-      let warn m = eprint_color ("{yellow}Warning: "^m) in
-      warn "incremental.load is activated but no data exists that can be loaded."
-    end;
-    let (changes, old_file, max_ids) =
-      if Serialize.results_exist () && GobConfig.get_bool "incremental.load" then begin
-        Serialize.Cache.load_data ();
-        let old_file = Serialize.Cache.(get_data CilFile) in
-        let changes = CompareCIL.compareCilFiles old_file current_file in
-        let max_ids = Serialize.Cache.(get_data VersionData) in
-        let max_ids = UpdateCil.update_ids old_file max_ids current_file changes in
-        (changes, Some old_file, max_ids)
-      end else begin
-        let max_ids = MaxIdUtil.get_file_max_ids current_file in
-        (CompareCIL.empty_change_info (), None, max_ids)
-      end
-    in
-    let solver_data = if Serialize.results_exist () && GobConfig.get_bool "incremental.load" && not (GobConfig.get_bool "incremental.only-rename")
-      then Some Serialize.Cache.(get_data SolverData)
-      else None
-    in
-    if GobConfig.get_bool "incremental.save" then begin
-      Serialize.Cache.(update_data CilFile current_file);
-      Serialize.Cache.(update_data VersionData max_ids);
-    end;
-    let old_data = match old_file, solver_data with
-      | Some cil_file, Some solver_data -> Some ({solver_data}: Analyses.analyzed_data)
-      | _, _ -> None
-    in
-    {server = false; Analyses.changes = changes; old_data}
-  in change_info
+  if GobConfig.get_bool "incremental.load" && not (Serialize.results_exist ()) then begin
+    let warn m = eprint_color ("{yellow}Warning: "^m) in
+    warn "incremental.load is activated but no data exists that can be loaded."
+  end;
+  let (changes, old_file, max_ids) =
+    if Serialize.results_exist () && GobConfig.get_bool "incremental.load" then begin
+      Serialize.Cache.load_data ();
+      let old_file = Serialize.Cache.(get_data CilFile) in
+      (* mxl *)
+      let changes = CompareCIL.compareCilFiles old_file current_file in
+      let max_ids = Serialize.Cache.(get_data VersionData) in
+      let max_ids = UpdateCil.update_ids old_file max_ids current_file changes in
+
+(*       (* TODO: possibly reuse CFGs created in compareCilFiles *)
+      let cfgOld = CfgTools.(Batteries.uncurry makeCFGBidir @@ getCFG old_file) in
+      let cfgCurrent = CfgTools.(Batteries.uncurry makeCFGBidir @@ getCFG current_file) in
+
+      (* CfgTools.incremental_cfg cfgOld cfgCurrent changes current_file; *)
+      CfgTools.dead_code_cfg cfgCurrent (Fun.const true) current_file; *)
+
+      (changes, Some old_file, max_ids)
+    end else begin
+      let max_ids = MaxIdUtil.get_file_max_ids current_file in
+      (CompareTypes.empty_change_info (), None, max_ids)
+    end
+  in
+  let solver_data = if Serialize.results_exist () && GobConfig.get_bool "incremental.load" && not (GobConfig.get_bool "incremental.only-rename")
+    then Some Serialize.Cache.(get_data SolverData)
+    else None
+  in
+  if GobConfig.get_bool "incremental.save" then begin
+    Serialize.Cache.(update_data CilFile current_file);
+    Serialize.Cache.(update_data VersionData max_ids);
+  end;
+  let old_data = match old_file, solver_data with
+    | Some cil_file, Some solver_data -> Some (({solver_data}: Analyses.analyzed_data), cil_file) 
+    | _, _ -> None
+  in
+  {server = false; Analyses.changes = changes; old_data}
 
 let () = (* signal for printing backtrace; other signals in Generic.SolverStats and Timeout *)
   let open Sys in

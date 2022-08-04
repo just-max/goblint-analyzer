@@ -195,6 +195,7 @@ struct
       in
       let write_file f fn =
         Messages.xml_file_name := fn;
+        prerr_endline ("filename is " ^ fn);
         BatPrintf.printf "Writing xml to temp. file: %s\n%!" fn;
         BatPrintf.fprintf f "<run>";
         BatPrintf.fprintf f "<parameters>%s</parameters>" Goblintutil.command_line;
@@ -380,14 +381,14 @@ type analyzed_data = {
 type increment_data = {
   server: bool;
 
-  old_data: analyzed_data option;
-  changes: CompareCIL.change_info
+  old_data: (analyzed_data * Cil.file) option;
+  changes: CompareTypes.change_info
 }
 
 let empty_increment_data ?(server=false) () = {
   server;
   old_data = None;
-  changes = CompareCIL.empty_change_info ()
+  changes = CompareTypes.empty_change_info ()
 }
 
 (** A side-effecting system. *)

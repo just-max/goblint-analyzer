@@ -11,7 +11,6 @@ theme:
 markdown_extensions:
   - toc:
       permalink: True
-  - footnotes
 
 dev_addr: '127.0.0.1:8010' # different port from default python http.server for g2html
 
@@ -25,7 +24,6 @@ nav:
   - 'Developer guide':
     - developer-guide/developing.md
     - developer-guide/firstanalysis.md
-    - developer-guide/extending-library.md
     - developer-guide/messaging.md
     - developer-guide/testing.md
     - developer-guide/debugging.md

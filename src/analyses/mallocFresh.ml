@@ -33,11 +33,10 @@ struct
     | Some lval -> assign_lval (Analyses.ask_of_ctx ctx) lval f_local
 
   let special ctx lval f args =
-    let desc = LibraryFunctions.find f in
-    match desc.special args with
-    | Malloc _
-    | Calloc _
-    | Realloc _ ->
+    match LibraryFunctions.classify f.vname args with
+    | `Malloc _
+    | `Calloc _
+    | `Realloc _ ->
       begin match ctx.ask HeapVar with
         | `Lifted var -> D.add var ctx.local
         | _ -> ctx.local

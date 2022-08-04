@@ -19,3 +19,5 @@ let rec for_all3 f l1 l2 l3 = match l1, l2, l3 with
   | _, _, _ -> invalid_arg "GobList.for_all3"
 
 let equal = List.eq
+
+let null = function [] -> true | _::_ -> false

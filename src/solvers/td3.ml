@@ -13,6 +13,7 @@ open Prelude
 open Analyses
 open Constraints
 open Messages
+open CompareTypes
 open CompareCIL
 open Cil
 
@@ -455,7 +456,7 @@ module WP =
       let reuse_wpoint = GobConfig.get_bool "incremental.wpoint" in
       if GobConfig.get_bool "incremental.load" then (
         let loaded, data = match S.increment.old_data with
-          | Some d -> true, Obj.obj d.solver_data
+          | Some (d, _) -> true, Obj.obj d.solver_data
           | _ -> false, create_empty_data ()
         in
         (* This hack is for fixing hashconsing.

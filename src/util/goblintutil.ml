@@ -73,7 +73,8 @@ let rm_rf path =
     end else
       Sys.remove path_str
   in
-  f path
+  (* just do nothing if the file doesn't exist (like rm -r) *)
+  if Sys.file_exists (Fpath.to_string path) then f path
 
 
 exception Timeout

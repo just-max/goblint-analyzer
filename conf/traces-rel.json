@@ -26,21 +26,7 @@
       ]
     },
     "base" : {
-      "privatization": "mutex-meet",
-      "invariant": {
-        "enabled": false
-      },
-      "eval": {
-        "deep-query": false
-      }
-    },
-    "apron": {
-      "invariant": {
-        "one-var": true,
-        "local": true,
-        "global": true,
-        "diff-box": false
-      }
+      "privatization": "mutex-meet"
     }
   },
   "sem": {
@@ -52,9 +38,6 @@
     },
     "builtin_unreachable": {
       "dead_code": true
-    },
-    "int": {
-      "signed_overflow": "assume_none"
     }
   },
   "exp": {
@@ -69,19 +52,5 @@
     "print_tids" : true,
     "print_wpoints" : true,
     "print_protection": true
-  },
-  "witness": {
-    "invariant": {
-      "other": false,
-      "loop-head": false,
-      "after-lock": true
-    }
-  },
-  "pre": {
-    "cppflags": [
-      "-DGOBLINT_NO_PTHREAD_ONCE",
-      "-DGOBLINT_NO_QSORT",
-      "-DGOBLINT_NO_BSEARCH"
-    ]
   }
 }

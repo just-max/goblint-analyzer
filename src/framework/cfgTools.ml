@@ -2,6 +2,7 @@ open MyCFG
 open Cil
 open Pretty
 open GobConfig
+open CompareTypes
 
 module H = NodeH
 module NH = NodeH
@@ -135,6 +136,7 @@ let () = Printexc.register_printer (function
     | _ -> None (* for other exceptions *)
   )
 
+(* mxl *)
 let createCFG (file: file) =
   let cfgF = H.create 113 in
   let cfgB = H.create 113 in
@@ -517,7 +519,7 @@ struct
 
   let printNodeStyle out (n:node) =
     let label = match n with
-      | Statement _ -> [] (* use default label *)
+      | Statement _ -> [Printf.sprintf {|label = "%s"|} (Node.show_id n)]
       | _ -> ["label=\"" ^ String.escaped (Node.show_cfg n) ^ "\""]
     in
     let shape = match n with
@@ -530,7 +532,7 @@ struct
     ignore (Pretty.fprintf out ("\t%a [%s];\n") p_node n styles)
 end
 
-let fprint_dot (module CfgPrinters: CfgPrinters) iter_edges out =
+let fprint_dot (module CfgPrinters: CfgPrinters) ?(close = true) iter_edges out =
   let node_table = NH.create 113 in
   Printf.fprintf out "digraph cfg {\n";
   Printf.fprintf out "\tnode [%s];\n" (String.concat "," CfgPrinters.defaultNodeStyles);
@@ -561,7 +563,7 @@ let fprint_dot (module CfgPrinters: CfgPrinters) iter_edges out =
 
   Printf.fprintf out "}\n";
   flush out;
-  close_out_noerr out
+  if close then close_out_noerr out
 
 let fprint_hash_dot cfg  =
   let module NoExtraNodeStyles =
@@ -585,6 +587,14 @@ let getCFG (file: file) : cfg * cfg =
   in
   if get_bool "justcfg" then fprint_hash_dot cfgB;
   (fun n -> H.find_default cfgF n []), (fun n -> H.find_default cfgB n [])
+
+
+let makeCFGBidir (forward : cfg) (backward : cfg) : (module CfgBidir) =
+  (module struct let prev = backward let next = forward end)
+
+
+(* mxl *)
+let getCFGBidir file = Batteries.uncurry makeCFGBidir @@ getCFG file
 
 
 let iter_fd_edges (module Cfg : CfgBackward) fd =
@@ -614,18 +624,150 @@ let fprint_fundec_html_dot (module Cfg : CfgBidir) live fd out =
   let iter_edges = iter_fd_edges (module Cfg) fd in
   fprint_dot (module CfgPrinters (HtmlExtraNodeStyles)) iter_edges out
 
-let dead_code_cfg (file:file) (module Cfg : CfgBidir) live =
-  iterGlobals file (fun glob ->
-      match glob with
-      | GFun (fd,loc) ->
-        (* ignore (Printf.printf "fun: %s\n" fd.svar.vname); *)
-        let base_dir = Goblintutil.create_dir (Fpath.v "cfgs") in
-        let c_file_name = Str.global_substitute (Str.regexp Filename.dir_sep) (fun _ -> "%2F") loc.file in
-        let dot_file_name = fd.svar.vname^".dot" in
-        let file_dir = Goblintutil.create_dir Fpath.(base_dir / c_file_name) in
-        let fname = Fpath.(file_dir / dot_file_name) in
-        fprint_fundec_html_dot (module Cfg : CfgBidir) live fd (open_out (Fpath.to_string fname))
-      | _ -> ()
+let fprint_fundec_compare (module Cfg : CfgBidir) ?(old = false) (unchanged : (node * node) list) (fuzzy : (node * node) list) ?(diff = []) fd out =
+  let open Batteries in
+  let open Stdlib in
+  let f = Printf.sprintf in
+  let filter f o = Option.bind o (fun x -> if f x then Some x else None) in
+  let swap (x, y) = y, x in
+  let unchanged, fuzzy = if old then List.(map swap unchanged, map swap fuzzy) else unchanged, fuzzy in
+  let module ExtraNodeStyles =
+  struct
+    let defaultNodeStyles = [(* "style = filled" *)]
+    (* ["id=\"\\N\""; "URL=\"javascript:show_info('\\N');\""; "style=filled"; "fillcolor=white"] (* \N is graphviz special for node ID *) *)
+
+    let extraNodeStyles n =
+      let find_other ms = List.find_opt (snd %> Node.equal n) ms |> Option.map fst in
+      let unchanged_other = find_other unchanged in
+      let fuzzy_other = find_other fuzzy in
+      let is_diff = old && List.exists (Node.equal n) diff in
+
+      let fill_color = match unchanged_other, fuzzy_other, is_diff with
+        | Some _, _, _ -> Some "#0c7bdc" (* dark blue *)
+        | _, Some _, _ when not old -> Some "#90c6f4" (* light blue *)
+        | _, _, true -> Some "#ffc20a" (* orange *)
+        | _ -> None
+      in
+
+      let mapping_other = match unchanged_other, fuzzy_other with
+        | (Some n, _ | _, Some n) -> Some (Node.show_cfg n)
+        | _ -> None
+      in
+
+      let font_color = Option.map (Fun.const "white") unchanged_other in
+
+      (if old then [] else [ Printf.sprintf {|URL="javascript:show_info('%s');"|} (Node.show_id n); ])
+      @ Option.fold ~none:[] ~some:(fun fc -> [f{|fillcolor = "%s"|} fc; {|style = "filled"|}]) fill_color
+      @ Option.fold ~none:[] ~some:(fun fc -> [f{|fontcolor = "%s"|} fc]) font_color
+      @ [ f{|label = <%s%s>|}
+            (Node.show_cfg n)
+            Option.(mapping_other |> filter (not % (=) (Node.show_cfg n))
+              |> fold ~none:"" ~some:(f{|<br/><i>%s</i>|}) ) ]
+  end
+  in
+  let iter_edges = iter_fd_edges (module Cfg) fd in
+  fprint_dot (module CfgPrinters (ExtraNodeStyles)) ~close:false iter_edges out
+
+let fprint_fundec_compare_old (module Cfg : CfgBidir) (unchanged : (node * node) list) (fuzzy : (node * node) list) diff fd out =
+  fprint_fundec_compare (module Cfg) ~old:true unchanged fuzzy ~diff fd out
+  (* let open Batteries in
+  let module ExtraNodeStyles =
+  struct
+    let defaultNodeStyles = ["style = filled"]
+    (* ["id=\"\\N\""; "URL=\"javascript:show_info('\\N');\""; "style=filled"; "fillcolor=white"] (* \N is graphviz special for node ID *) *)
+
+    let extraNodeStyles n =
+      (* [ Printf.sprintf {|URL="javascript:show_info('%s');"|} (Node.show_id n) ]
+      @ *)
+      (match
+        List.find_opt (fst %> Node.equal n) fuzzy (* old = n *)
+      with
+      | Some (_, fuzzy_new) ->
+        [ Printf.sprintf {|xlabel = <<font color="black">%s</font>>|} (Node.show_cfg fuzzy_new); ]
+      | _ -> [])
+      @
+      (match
+        List.find_opt (fst %> Node.equal n) unchanged,
+        List.exists (Node.equal n) diff
+      with
+      | Some (old, _), _ ->
+        [ (* Printf.sprintf {|xlabel = <<font color="black">%s</font>>|} (Node.show_cfg old); *)
+          "fontcolor = white";
+          {|fillcolor = "#0c7bdc"|} ]
+      | _, true -> [{|fillcolor = "#ffc20a"|}]
+      | _ -> ["fillcolor = white"])
+  end
+  in
+  let iter_edges = iter_fd_edges (module Cfg) fd in
+  fprint_dot (module CfgPrinters (ExtraNodeStyles)) ~close:false iter_edges out *)
+
+let export_cfgs ?(base_dir = Fpath.v "cfgs") (f : global -> fundec -> Fpath.t -> unit) (file : file) =
+  let base_dir = Goblintutil.create_dir base_dir in
+  iterGlobals file (function
+    | GFun (fd, loc) as glob ->
+      (* ignore (Printf.printf "fun: %s\n" fd.svar.vname); *)
+      let c_file_name = Str.global_substitute (Str.regexp Filename.dir_sep) (fun _ -> "%2F") loc.file in
+      let dot_file_name = fd.svar.vname^".dot" in
+      let file_dir = Goblintutil.create_dir Fpath.(base_dir / c_file_name) in
+      let fname = Fpath.(file_dir / dot_file_name) in
+      Goblintutil.rm_rf fname; (* may be a folder, so rm -r *)
+      f glob fd fname
+    | _ -> ()
+  )
+
+let dead_code_cfg (module Cfg : CfgBidir) live =
+  export_cfgs (fun _ fd fname -> fprint_fundec_html_dot (module Cfg) live fd (open_out (Fpath.to_string fname)))
+
+(* working with globals from new file *)
+let incremental_cfg (module CfgOld : CfgBidir) (module CfgNew : CfgBidir) (change_info : change_info) =
+  let same_fundec fd1 fd2 = fd1.svar.vid = fd2.svar.vid in
+  export_cfgs (fun glob fd path ->
+      let abspath = Goblintutil.create_dir path in
+
+      (* change_info.unchanged/changed will only hold GFun?? *)
+
+      (* unchanged global *)
+      if
+        List.exists
+        (function
+          | ({ current = GFun (current_fd, _) ; old } : unchanged_global)
+            when same_fundec current_fd fd -> true
+          | _ -> false)
+        change_info.unchanged
+      then
+        (prerr_endline ("unchanged: " ^ fd.svar.vname) ;
+        Out_channel.with_open_text
+          Fpath.(to_string (abspath / "unchanged.dot"))
+          (fun ch -> fprint_fundec_compare (module CfgNew) [] [] fd ch))
+
+      (* changed global *)
+      else match
+        List.find_map
+          (function
+            | ({ current = GFun (current_fd, _) ; diff = Some nd ; old = GFun (old_fd, _) ; _ } : changed_global)
+              when same_fundec current_fd fd -> Some (nd, old_fd) (* TODO: why might diff be None? *)
+            | _ -> None)
+          change_info.changed
+      with
+        | Some (nd, old_fd) ->
+          ((prerr_endline ("changed: " ^ fd.svar.vname) ;
+
+          prerr_endline (String.concat ", " @@ List.map Node.show_id nd.primObsoleteNodes) ;
+
+          Out_channel.with_open_text
+            Fpath.(to_string (abspath / "00old.dot"))
+            (fun ch -> fprint_fundec_compare_old (module CfgOld) nd.unchangedNodes nd.fuzzyMatchNodes nd.primObsoleteNodes old_fd ch)) ;
+
+          Out_channel.with_open_text
+            Fpath.(to_string (abspath / "01new.dot"))
+            (fun ch -> fprint_fundec_compare (module CfgNew) nd.unchangedNodes nd.fuzzyMatchNodes fd ch))
+
+        | None -> prerr_endline ("false dichotomy: global was neither changed nor unchanged: " ^ fd.svar.vname) ;
+
+      (* match List.find_opt (fun (c : changed_global) -> c.current = glob) change_info.changed with
+      | Some c -> failwith "" | None -> ();
+
+      (); *)
     )
 
 
@@ -676,7 +818,7 @@ let getGlobalInits (file: file) : edges  =
   iterGlobals file f;
   let initfun = emptyFunction "__goblint_dummy_init" in
   (* order is not important since only compile-time constants can be assigned *)
-  ({line = 0; file="initfun"; byte= 0; column = 0; endLine = -1; endByte = -1; endColumn = -1; synthetic = true}, Entry initfun) :: (BatHashtbl.keys inits |> BatList.of_enum)
+  ({line = 0; file="initfun"; byte= 0; column = 0; endLine = -1; endByte = -1; endColumn = -1;}, Entry initfun) :: (BatHashtbl.keys inits |> BatList.of_enum)
 
 
 let numGlobals file =

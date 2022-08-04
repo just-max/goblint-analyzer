@@ -135,7 +135,6 @@ struct
           endLine = e;
           endColumn = -1; (* not shown *)
           endByte = 0; (* wrong, but not shown *)
-          synthetic = false;
         }
         in
         (doc, Some loc)
@@ -203,7 +202,7 @@ struct
     res
 
   (** The main function to preform the selected analyses. *)
-  let analyze (file: file) (startfuns, exitfuns, otherfuns: Analyses.fundecs) =
+  let analyze (file: file) (increment_data: increment_data) (startfuns, exitfuns, otherfuns: Analyses.fundecs) =
 
     Goblintutil.should_warn := false; (* reset for server mode *)
 
@@ -582,23 +581,38 @@ struct
             match local with
             | None -> Queries.Result.bot q
             | Some local ->
-              let rec ctx =
-                { ask    = (fun (type a) (q: a Queries.t) -> Spec.query ctx q)
-                ; emit   = (fun _ -> failwith "Cannot \"emit\" in query context.")
-                ; node   = MyCFG.dummy_node (* TODO maybe ask should take a node (which could be used here) instead of a location *)
-                ; prev_node = MyCFG.dummy_node
-                ; control_context = Obj.repr (fun () -> ctx_failwith "No context in query context.")
-                ; context = (fun () -> ctx_failwith "No context in query context.")
-                ; edge    = MyCFG.Skip
-                ; local  = local
-                ; global = GHT.find gh
-                ; presub = (fun _ -> raise Not_found)
-                ; spawn  = (fun v d    -> failwith "Cannot \"spawn\" in query context.")
-                ; split  = (fun d es   -> failwith "Cannot \"split\" in query context.")
-                ; sideg  = (fun v g    -> failwith "Cannot \"split\" in query context.")
-                }
-              in
-              Spec.query ctx q
+              match q with
+              | Queries.Invariant context ->
+                (* Directly handle the invariant query here *)
+                (let context: Invariant.context = {
+                    scope=context.scope;
+                    i= -1; (* Not used here *)
+                    lval=context.lval;
+                    offset=context.offset;
+                    deref_invariant=(fun _ _ _ -> Invariant.none)
+                  } in
+                 match Spec.D.invariant context local with
+                 | Some e -> (`Lifted e)
+                 | None -> `Top)
+              | _ ->
+                (* build a ctx for using the query system for all other queries *)
+                let rec ctx =
+                  { ask    = (fun (type a) (q: a Queries.t) -> Spec.query ctx q)
+                  ; emit   = (fun _ -> failwith "Cannot \"emit\" in query context.")
+                  ; node   = MyCFG.dummy_node (* TODO maybe ask should take a node (which could be used here) instead of a location *)
+                  ; prev_node = MyCFG.dummy_node
+                  ; control_context = Obj.repr (fun () -> ctx_failwith "No context in query context.")
+                  ; context = (fun () -> ctx_failwith "No context in query context.")
+                  ; edge    = MyCFG.Skip
+                  ; local  = local
+                  ; global = GHT.find gh
+                  ; presub = (fun _ -> raise Not_found)
+                  ; spawn  = (fun v d    -> failwith "Cannot \"spawn\" in query context.")
+                  ; split  = (fun d es   -> failwith "Cannot \"split\" in query context.")
+                  ; sideg  = (fun v g    -> failwith "Cannot \"split\" in query context.")
+                  }
+                in
+                Spec.query ctx q
           )
         in
         let ask loc = { Queries.f = fun (type a) (q: a Queries.t) -> ask loc q } in
@@ -608,7 +622,8 @@ struct
       lh, gh
     in
 
-    Generic.write_cfgs := CfgTools.dead_code_cfg file (module Cfg:CfgBidir);
+    (* changing this to a lambda-expression... breaks the program, despite write_cfgs being unused??? *)
+    (* Generic.write_cfgs := CfgTools.dead_code_cfg file (module Cfg:CfgBidir); *)
 
     (* Use "normal" constraint solving *)
     let timeout_reached () =
@@ -630,8 +645,17 @@ struct
         fun _ -> true (* TODO: warn about conflicting options *)
     in
 
+  (*   let _ = change_info.changes.changed in
+    (* TODO: choose what kind of information to show on CFG *)
+    (* mxl *) *)
     if get_bool "exp.cfgdot" then
-      CfgTools.dead_code_cfg file (module Cfg : CfgBidir) liveness;
+      (* CfgTools.dead_code_cfg (module Cfg : CfgBidir) liveness file; *)
+      (* TODO: handle missing old file (why can this happen?) *)
+      increment_data.old_data |> Stdlib.Option.iter (fun (_, old_file) ->
+        let cfgOld = CfgTools.getCFGBidir old_file in
+        CfgTools.incremental_cfg cfgOld (module Cfg) increment_data.changes file
+      );
+
 
     let warn_global g v =
       (* ignore (Pretty.printf "warn_global %a %a\n" CilType.Varinfo.pretty g EQSys.G.pretty v); *)
@@ -689,25 +713,21 @@ end
    [analyze_loop] cannot reside in it anymore since each invocation of
    [get_spec] in the loop might/should return a different module, and we
    cannot swap the functor parameter from inside [AnalyzeCFG]. *)
-let rec analyze_loop (module CFG : CfgBidir) file fs change_info =
+let rec analyze_loop (module CFG : CfgBidir) file fs increment_data =
   try
     let (module Spec) = get_spec () in
-    let module A = AnalyzeCFG (CFG) (Spec) (struct let increment = change_info end) in
-    A.analyze file fs
+    let module A = AnalyzeCFG (CFG) (Spec) (struct let increment = increment_data end) in
+    A.analyze file increment_data fs
   with Refinement.RestartAnalysis ->
     (* Tail-recursively restart the analysis again, when requested.
         All solving starts from scratch.
         Whoever raised the exception should've modified some global state
         to do a more precise analysis next time. *)
     (* TODO: do some more incremental refinement and reuse parts of solution *)
-    analyze_loop (module CFG) file fs change_info
-
-let compute_cfg file =
-  let cfgF, cfgB = CfgTools.getCFG file in
-  (module struct let prev = cfgB let next = cfgF end : CfgBidir)
+    analyze_loop (module CFG) file fs increment_data
 
 (** The main function to perform the selected analyses. *)
-let analyze change_info (file: file) fs =
+let analyze increment_data (file: file) fs =
   if (get_bool "dbg.verbose") then print_endline "Generating the control flow graph.";
-  let (module CFG) = compute_cfg file in
-  analyze_loop (module CFG) file fs change_info
+  let (module CFG) = CfgTools.getCFGBidir file in
+  analyze_loop (module CFG) file fs increment_data

@@ -1,34 +1,8 @@
 open Cil
 open MyCFG
+open CompareTypes
 include CompareAST
 include CompareCFG
-
-type nodes_diff = {
-  unchangedNodes: (node * node) list;
-  primObsoleteNodes: node list; (** primary obsolete nodes -> all obsolete nodes are reachable from these *)
-}
-
-type unchanged_global = {
-  old: global;
-  current: global
-}
-(** For semantically unchanged globals, still keep old and current version of global for resetting current to old. *)
-
-type changed_global = {
-  old: global;
-  current: global;
-  unchangedHeader: bool;
-  diff: nodes_diff option
-}
-
-type change_info = {
-  mutable changed: changed_global list;
-  mutable unchanged: unchanged_global list;
-  mutable removed: global list;
-  mutable added: global list
-}
-
-let empty_change_info () : change_info = {added = []; removed = []; changed = []; unchanged = []}
 
 let should_reanalyze (fdec: Cil.fundec) =
   List.mem fdec.svar.vname (GobConfig.get_string_list "incremental.force-reanalyze.funs")
@@ -36,7 +10,7 @@ let should_reanalyze (fdec: Cil.fundec) =
 (* If some CFGs of the two functions to be compared are provided, a fine-grained CFG comparison is done that also determines which
  * nodes of the function changed. If on the other hand no CFGs are provided, the "old" AST comparison on the CIL.file is
  * used for functions. Then no information is collected regarding which parts/nodes of the function changed. *)
-let eqF (a: Cil.fundec) (b: Cil.fundec) (cfgs : (cfg * (cfg * cfg)) option) =
+let eqF (a: Cil.fundec) (b: Cil.fundec) (cfgs : ((cfg * cfg) * (cfg * cfg)) option) =
   let unchangedHeader = eq_varinfo a.svar b.svar && GobList.equal eq_varinfo a.sformals b.sformals in
   let identical, diffOpt =
     if should_reanalyze a then
@@ -48,24 +22,31 @@ let eqF (a: Cil.fundec) (b: Cil.fundec) (cfgs : (cfg * (cfg * cfg)) option) =
       else
         match cfgs with
         | None -> eq_block (a.sbody, a) (b.sbody, b), None
-        | Some (cfgOld, (cfgNew, cfgNewBack)) ->
-          let module CfgOld : MyCFG.CfgForward = struct let next = cfgOld end in
-          let module CfgNew : MyCFG.CfgBidir = struct let prev = cfgNewBack let next = cfgNew end in
-          let matches, diffNodes1 = compareFun (module CfgOld) (module CfgNew) a b in
+        | Some ((cfgOld, cfgOldBack), (cfgNew, cfgNewBack)) ->
+          let matches, fuzzyMatches, diffNodes1 =
+            compareFun
+              (CfgTools.makeCFGBidir cfgOld cfgOldBack)
+              (CfgTools.makeCFGBidir cfgNew cfgNewBack)
+              a b
+          in
           if diffNodes1 = [] then (true, None)
-          else (false, Some {unchangedNodes = matches; primObsoleteNodes = diffNodes1})
+          else (false, Some {
+            unchangedNodes = matches; fuzzyMatchNodes = fuzzyMatches; primObsoleteNodes = diffNodes1;
+            (* cfg_old = { forward = cfgOld; backward = cfgOldBack; };
+            cfg_new = { forward = cfgNew; backward = cfgNewBack; } *)})
   in
   identical, unchangedHeader, diffOpt
 
-let eq_glob (a: global) (b: global) (cfgs : (cfg * (cfg * cfg)) option) = match a, b with
-  | GFun (f,_), GFun (g,_) -> eqF f g cfgs
+let eq_glob (a: global) (b: global) (cfgs : ((cfg * cfg) * (cfg * cfg)) option) = match a, b with
+  | GFun (f,_), GFun (g,_) -> (* print_endline (Printf.sprintf "%s %s" f.svar.vname g.svar.vname);*) eqF f g cfgs
   | GVar (x, init_x, _), GVar (y, init_y, _) -> eq_varinfo x y, false, None (* ignore the init_info - a changed init of a global will lead to a different start state *)
   | GVarDecl (x, _), GVarDecl (y, _) -> eq_varinfo x y, false, None
   | _ -> ignore @@ Pretty.printf "Not comparable: %a and %a\n" Cil.d_global a Cil.d_global b; false, false, None
 
 let compareCilFiles ?(eq=eq_glob) (oldAST: file) (newAST: file) =
+  (* old, oldBack, new, newBack *)
   let cfgs = if GobConfig.get_string "incremental.compare" = "cfg"
-    then Some (CfgTools.getCFG oldAST |> fst, CfgTools.getCFG newAST)
+    then Some (CfgTools.getCFG oldAST, CfgTools.getCFG newAST)
     else None in
 
   let addGlobal map global  =
