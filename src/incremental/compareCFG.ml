@@ -2,6 +2,9 @@ open MyCFG
 open Queue
 open Cil
 include CompareAST
+open DiffLib
+
+let f = Printf.sprintf
 
 let eq_node (x, fun1) (y, fun2) =
   match x,y with
@@ -151,15 +154,15 @@ let compare_digraphs_nondet (type n e)
   (* take a list of matches and extend the BFS represented by each one *)
   let step matchings =
     let* _mi, ({ old_to_new ; new_to_old ; queue } as _m : (n NMap.t, NPairSet.t) matching) = enumerate matchings in
-    print_endline @@ Printf.sprintf "## matching index: %d" _mi ;
-    print_endline @@ out_matching _m ;
+    (* print_endline @@ Printf.sprintf "## matching index: %d" _mi ;
+    print_endline @@ out_matching _m ; *)
     let+ extension_matching = NPairSet.fold (fun (n_old, n_new) matchings' ->
-        print_endline @@ Printf.sprintf "### for the node pair: %s, %s" (n_string n_old) (n_string n_new) ;
+        (* print_endline @@ Printf.sprintf "### for the node pair: %s, %s" (n_string n_old) (n_string n_new) ; *)
         (* try and extend the existing match, splitting in case of a conflict *)
         let matches_by_node = find_successor_matches old_to_new new_to_old n_old n_new in
-        print_endline "#### potential matches by node:" ; print_endline @@ out1 matches_by_node ;
+        (* print_endline "#### potential matches by node:" ; print_endline @@ out1 matches_by_node ; *)
         let extensions = make_successor_matches matches_by_node in
-        print_endline "#### list of alternative matches:" ; print_endline @@ out2 extensions ;
+        (* print_endline "#### list of alternative matches:" ; print_endline @@ out2 extensions ; *)
         let* extension, _ = extensions in
         (* let* extension, _ = trace_ out2 @@ make_successor_matches @@ (trace_ out1 @@ find_successor_matches old_to_new new_to_old n_old n_new) in *)
         let* (matching' : (n NMap.t, NPairSet.t) matching) = matchings' in
@@ -195,18 +198,18 @@ let compare_digraphs_nondet (type n e)
   let cull matchings = ListExtensions.sort_on (fun m -> - score m) matchings |> take limit in
 
   let rec go i matchings =
-    print_endline @@ Printf.sprintf "# RUN %d" i ;
+    (* print_endline @@ Printf.sprintf "# RUN %d" i ;
     print_endline "current matchings:" ;
     print_endline @@ out3 matchings ;
-    print_endline @@ Printf.sprintf "matchings being considered: %d" (List.length matchings);
+    print_endline @@ Printf.sprintf "matchings being considered: %d" (List.length matchings); *)
     let step_result = step matchings |> cull in
     if List.exists (fun m -> not @@ NPairSet.is_empty m.queue) step_result
       then go (i + 1) step_result
-      else (print_endline "# FINISHED"; print_endline @@ out3 step_result; step_result)
+      else ((* print_endline "# FINISHED"; print_endline @@ out3 step_result; *) step_result)
   in
 
   let finish matchings =
-    print_endline "## Final Result";
+    (* print_endline "## Final Result"; *)
     (ListExtensions.maximum_on score matchings).old_to_new
     |> trace_ (str_nmap n_string)
     |> NMap.bindings
@@ -329,7 +332,6 @@ let compareCfgs (module CfgOld : CfgForward) (module CfgNew : CfgForward) (fun1 
   let leaves1, leaves2 = cfgLeaves (module CfgOld) fun1, cfgLeaves (module CfgNew) fun2
   in () *)
 
-
 (* This is the second phase of the CFG comparison of functions. It removes the nodes from the matching node set 'same'
  * that have an incoming backedge in the new CFG that can be reached from a differing new node. This is important to
  * recognize new dependencies between unknowns that are not contained in the infl from the previous run. *)
@@ -423,7 +425,7 @@ module MirrorCfg (Cfg : CfgBidir) : CfgBidir = struct
   include CfgBackwardOfForward (Cfg)
 end
 
-let compareFun (module CfgOld : CfgBidir) (module CfgNew : CfgBidir) fun1 fun2 =
+let compare_fun (module CfgOld : CfgBidir) (module CfgNew : CfgBidir) fun1 fun2 =
 
   print_endline ("start comparing " ^ fun1.svar.vname);
 
@@ -486,13 +488,91 @@ let compareFun (module CfgOld : CfgBidir) (module CfgNew : CfgBidir) fun1 fun2 =
   let unchanged, diffNodes1 = Stats.time "compare-phase2" (fun () -> reexamine fun1 fun2 same diff (module CfgOld) (module CfgNew)) () in
   List.of_seq unchanged, List.of_seq diffNodes1 *)
 
+(* idea: sort by source order??? *)
+
+let linearize_digraph (type n e)
+    (* ?(n_string = Fun.const "<node>") ?(e_string = Fun.const "<edge>") *)
+    (module N : Hashtbl.HashedType with type t = n)
+    (graph : (n, e) digraph) (start : n) : (n * e list) list =
+
+  let module HashtblN = Hashtbl.Make (N) in
+  let visited : unit HashtblN.t = HashtblN.create 101 in
+
+  let rec go (n : n) (acc : (n * e list) list) : (n * e list) list =
+
+    if HashtblN.mem visited n
+      then acc
+      else begin
+        HashtblN.replace visited n () ;
+        let es, ns = graph n |> List.split in
+        (* right-fold instead of left-fold is important if order of outbound edges is relevant *)
+        (n, es) :: List.fold_right go ns acc
+      end
+
+  in go start []
+
+let compare_fun (module CfgOld : CfgBidir) (module CfgNew : CfgBidir) fun_old fun_new =
+  let open Batteries in let open Stdlib in
+  let linearize_cfg cfg fundec = (* type n = Node.t, type e = edge list *)
+    linearize_digraph (module Node) (digraph_of_cfg cfg) (FunctionEntry fundec) in
+
+  let lin_old = linearize_cfg CfgOld.next fun_old in
+  let lin_new = linearize_cfg CfgNew.next fun_new in
+
+  let nes_equal (n1, es1) (n2, es2) =
+    eq_node (n1, fun_old) (n2, fun_new)
+    (* && List.compare_lengths es1 es2 = 0 *)
+    && List.equal eq_edge_list es1 es2
+  in
+  let diff = DiffLib.myers nes_equal lin_old lin_new in
+  let u_diff = DiffLib.unify lin_old lin_new diff in
+
+  print_endline @@ "diff for " ^ fun_old.svar.vname;
+
+  List.iter
+    (fun (ud : (node * edge list list, node * edge list list) unified_operation) ->
+      ud |> DiffLib.show_unified_operation'
+        (fun (n, (ess : edge list list)) ->
+          f"%-98s %s"
+            (ess |> List.map (List.map (Edge.pretty () %> Pretty.sprint ~width:max_int) %> String.concat " | ") |> String.concat {| /\ |})
+            (n |> Node.pretty_plain () |> Pretty.sprint ~width:max_int) |> Str.global_replace (Str.regexp "\n[ \t]*") " ")
+      |> print_endline)
+    u_diff ;
+
+  (* let _matching = List.filter_map (function UUnchanged ((o, _), (n, _)) -> Some (o, n) | _ -> None) u_diff in *)
+  let matches, fuzzyMatches, diffNodes1 = compare_fun (module CfgOld) (module CfgNew) fun_old fun_new in
+  matches, fuzzyMatches, diffNodes1, u_diff
 
 
 
 
+(* let linearize_digraph (type n e)
+    (* ?(n_string = Fun.const "<node>") ?(e_string = Fun.const "<edge>") *)
+    (module N : Hashtbl.HashedType with type t = n)
+    (graph : (n, e) digraph) (start : n) =
 
+  let module LL = BatDllist in
+  let concat onto = List.fold_left (fun o (h, t) -> LL.splice o h; t) onto in
 
+  let module HashtblN = Hashtbl.Make (N) in
+  let visited : unit HashtblN.t = HashtblN.create 101 in
 
+  let rec go ?(e : e option) (n : n) =
+
+    let lln = LL.create (e, n) in
+    let visited_n = HashtblN.mem visited n in
+    HashtblN.replace visited n () ;
+
+    if visited_n
+      then lln, lln
+      else
+        let lines = graph n |> List.rev |> List.map (fun (e, n) -> go ~e n) in
+        lln, concat lln (List.rev lines)
+
+  (* TODO:
+    - circular doubly linked list, so storing head and tail is not necessary
+    - could probably use a list accumulator instead *)
+  in go start |> fst |> LL.to_list *)
 
 
 

@@ -10,6 +10,7 @@ type cfg_bidir = {
 type nodes_diff = {
   unchangedNodes: (node * node) list;
   fuzzyMatchNodes: (node * node) list;
+  diff: (node * edge list list, node * edge list list) DiffLib.unified_diff;
   primObsoleteNodes: node list; (** primary obsolete nodes -> all obsolete nodes are reachable from these *)
 }
 

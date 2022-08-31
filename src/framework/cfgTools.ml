@@ -624,7 +624,7 @@ let fprint_fundec_html_dot (module Cfg : CfgBidir) live fd out =
   let iter_edges = iter_fd_edges (module Cfg) fd in
   fprint_dot (module CfgPrinters (HtmlExtraNodeStyles)) iter_edges out
 
-let fprint_fundec_compare (module Cfg : CfgBidir) ?(old = false) (unchanged : (node * node) list) (fuzzy : (node * node) list) ?(diff = []) fd out =
+let fprint_fundec_compare (module Cfg : CfgBidir) ?(old = false) (unchanged : (node * node) list) (fuzzy : (node * node) list) ?(prim_obsolete = []) fd out =
   let open Batteries in
   let open Stdlib in
   let f = Printf.sprintf in
@@ -640,9 +640,9 @@ let fprint_fundec_compare (module Cfg : CfgBidir) ?(old = false) (unchanged : (n
       let find_other ms = List.find_opt (snd %> Node.equal n) ms |> Option.map fst in
       let unchanged_other = find_other unchanged in
       let fuzzy_other = find_other fuzzy in
-      let is_diff = old && List.exists (Node.equal n) diff in
+      let is_prim_obsolete = old && List.exists (Node.equal n) prim_obsolete in
 
-      let fill_color = match unchanged_other, fuzzy_other, is_diff with
+      let fill_color = match unchanged_other, fuzzy_other, is_prim_obsolete with
         | Some _, _, _ -> Some "#0c7bdc" (* dark blue *)
         | _, Some _, _ when not old -> Some "#90c6f4" (* light blue *)
         | _, _, true -> Some "#ffc20a" (* orange *)
@@ -668,38 +668,54 @@ let fprint_fundec_compare (module Cfg : CfgBidir) ?(old = false) (unchanged : (n
   let iter_edges = iter_fd_edges (module Cfg) fd in
   fprint_dot (module CfgPrinters (ExtraNodeStyles)) ~close:false iter_edges out
 
-let fprint_fundec_compare_old (module Cfg : CfgBidir) (unchanged : (node * node) list) (fuzzy : (node * node) list) diff fd out =
-  fprint_fundec_compare (module Cfg) ~old:true unchanged fuzzy ~diff fd out
-  (* let open Batteries in
+let fprint_fundec_compare_old (module Cfg : CfgBidir) (unchanged : (node * node) list) (fuzzy : (node * node) list) prim_obsolete fd out =
+  fprint_fundec_compare (module Cfg) ~old:true unchanged fuzzy ~prim_obsolete fd out
+
+let fprint_fundec_diff ~old (module Cfg : CfgBidir) (diff : _ DiffLib.unified_diff) fd out =
+  let open DiffLib in
+  let open Batteries in
+  let open Stdlib in
+  let f = Printf.sprintf in
+  let filter f o = Option.bind o (fun x -> if f x then Some x else None) in
+  let diff_unchanged =
+    List.filter_map (
+      function
+        | UUnchanged ((o, _), (n, _)) -> Some (if old then o, n else n, o)
+        | _ -> None)
+      diff
+  in
+  let changes = List.filter_map (function UDelete (n, _) when old -> Some n | UInsert (n, _) when not old -> Some n | _ -> None) diff in
   let module ExtraNodeStyles =
   struct
-    let defaultNodeStyles = ["style = filled"]
+    let defaultNodeStyles = [(* "style = filled" *)]
     (* ["id=\"\\N\""; "URL=\"javascript:show_info('\\N');\""; "style=filled"; "fillcolor=white"] (* \N is graphviz special for node ID *) *)
 
     let extraNodeStyles n =
-      (* [ Printf.sprintf {|URL="javascript:show_info('%s');"|} (Node.show_id n) ]
-      @ *)
-      (match
-        List.find_opt (fst %> Node.equal n) fuzzy (* old = n *)
-      with
-      | Some (_, fuzzy_new) ->
-        [ Printf.sprintf {|xlabel = <<font color="black">%s</font>>|} (Node.show_cfg fuzzy_new); ]
-      | _ -> [])
-      @
-      (match
-        List.find_opt (fst %> Node.equal n) unchanged,
-        List.exists (Node.equal n) diff
-      with
-      | Some (old, _), _ ->
-        [ (* Printf.sprintf {|xlabel = <<font color="black">%s</font>>|} (Node.show_cfg old); *)
-          "fontcolor = white";
-          {|fillcolor = "#0c7bdc"|} ]
-      | _, true -> [{|fillcolor = "#ffc20a"|}]
-      | _ -> ["fillcolor = white"])
+      let find_other ms = List.find_opt (fst %> Node.equal n) ms |> Option.map snd in
+      let unchanged_other = find_other diff_unchanged in
+
+      let fill_color =
+        if List.exists (Node.equal n) changes
+          then Some (if old then "#e27e8d" else "#8bd49c") (* red or green *)
+          else None
+      in
+
+      let mapping_other = Option.map Node.show_cfg unchanged_other in
+        
+      (* let font_color = Option.map (Fun.const "white") unchanged_other in *)
+      let font_color = None in
+
+      (if old then [] else [ Printf.sprintf {|URL="javascript:show_info('%s');"|} (Node.show_id n); ])
+      @ Option.fold ~none:[] ~some:(fun fc -> [f{|fillcolor = "%s"|} fc; {|style = "filled"|}]) fill_color
+      @ Option.fold ~none:[] ~some:(fun fc -> [f{|fontcolor = "%s"|} fc]) font_color
+      @ [ f{|label = <%s%s>|}
+            (Node.show_cfg n)
+            Option.(mapping_other |> filter (not % (=) (Node.show_cfg n))
+              |> fold ~none:"" ~some:(f{|<br/><i>%s</i>|}) ) ]
   end
   in
   let iter_edges = iter_fd_edges (module Cfg) fd in
-  fprint_dot (module CfgPrinters (ExtraNodeStyles)) ~close:false iter_edges out *)
+  fprint_dot (module CfgPrinters (ExtraNodeStyles)) ~close:false iter_edges out
 
 let export_cfgs ?(base_dir = Fpath.v "cfgs") (f : global -> fundec -> Fpath.t -> unit) (file : file) =
   let base_dir = Goblintutil.create_dir base_dir in
@@ -721,6 +737,7 @@ let dead_code_cfg (module Cfg : CfgBidir) live =
 (* working with globals from new file *)
 let incremental_cfg (module CfgOld : CfgBidir) (module CfgNew : CfgBidir) (change_info : change_info) =
   let same_fundec fd1 fd2 = fd1.svar.vid = fd2.svar.vid in
+  (* iterate over globals in new file *)
   export_cfgs (fun glob fd path ->
       let abspath = Goblintutil.create_dir path in
 
@@ -750,17 +767,25 @@ let incremental_cfg (module CfgOld : CfgBidir) (module CfgNew : CfgBidir) (chang
           change_info.changed
       with
         | Some (nd, old_fd) ->
-          ((prerr_endline ("changed: " ^ fd.svar.vname) ;
+          (prerr_endline ("changed: " ^ fd.svar.vname) ;
 
           prerr_endline (String.concat ", " @@ List.map Node.show_id nd.primObsoleteNodes) ;
 
           Out_channel.with_open_text
             Fpath.(to_string (abspath / "00old.dot"))
-            (fun ch -> fprint_fundec_compare_old (module CfgOld) nd.unchangedNodes nd.fuzzyMatchNodes nd.primObsoleteNodes old_fd ch)) ;
+            (fun ch -> fprint_fundec_compare_old (module CfgOld) nd.unchangedNodes nd.fuzzyMatchNodes nd.primObsoleteNodes old_fd ch) ;
 
           Out_channel.with_open_text
             Fpath.(to_string (abspath / "01new.dot"))
-            (fun ch -> fprint_fundec_compare (module CfgNew) nd.unchangedNodes nd.fuzzyMatchNodes fd ch))
+            (fun ch -> fprint_fundec_compare (module CfgNew) nd.unchangedNodes nd.fuzzyMatchNodes fd ch) ;
+
+          Out_channel.with_open_text
+            Fpath.(to_string (abspath / "02diff_old.dot"))
+            (fun ch -> fprint_fundec_diff ~old:true (module CfgOld) nd.diff fd ch) ;
+            
+          Out_channel.with_open_text
+            Fpath.(to_string (abspath / "03diff_new.dot"))
+            (fun ch -> fprint_fundec_diff ~old:false (module CfgNew) nd.diff fd ch))
 
         | None -> prerr_endline ("false dichotomy: global was neither changed nor unchanged: " ^ fd.svar.vname) ;
 

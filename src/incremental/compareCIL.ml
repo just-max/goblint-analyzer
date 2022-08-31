@@ -23,15 +23,15 @@ let eqF (a: Cil.fundec) (b: Cil.fundec) (cfgs : ((cfg * cfg) * (cfg * cfg)) opti
         match cfgs with
         | None -> eq_block (a.sbody, a) (b.sbody, b), None
         | Some ((cfgOld, cfgOldBack), (cfgNew, cfgNewBack)) ->
-          let matches, fuzzyMatches, diffNodes1 =
-            compareFun
+          let matches, fuzzyMatches, diffNodes1, diff =
+            compare_fun
               (CfgTools.makeCFGBidir cfgOld cfgOldBack)
               (CfgTools.makeCFGBidir cfgNew cfgNewBack)
               a b
           in
           if diffNodes1 = [] then (true, None)
           else (false, Some {
-            unchangedNodes = matches; fuzzyMatchNodes = fuzzyMatches; primObsoleteNodes = diffNodes1;
+            unchangedNodes = matches; fuzzyMatchNodes = fuzzyMatches; diff = diff; primObsoleteNodes = diffNodes1;
             (* cfg_old = { forward = cfgOld; backward = cfgOldBack; };
             cfg_new = { forward = cfgNew; backward = cfgNewBack; } *)})
   in
