@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 from pathlib import Path
 import subprocess
@@ -9,6 +10,10 @@ import json
 import numpy as np
 import brokenaxes
 import matplotlib as mpl
+import shlex
+import time
+from functools import wraps
+from collections.abc import MutableMapping, Mapping
 mpl.use("pgf")
 mpl.rcParams.update({
     "pgf.texsystem": "pdflatex",
@@ -36,40 +41,63 @@ preparelog = "prepare.log"
 analyzerlog = "analyzer.log"
 comparelog = "compare.log"
 
-def reset_incremental_data(incr_data_dir):
-    if os.path.exists(incr_data_dir) and os.path.isdir(incr_data_dir):
-        shutil.rmtree(incr_data_dir)
+
+@wraps(print)
+def eprint(*args, **kwargs):
+    print(*args, **kwargs, file=sys.stderr)
+
+def reset_incremental_data(incr_data_dir: Path):
+    if incr_data_dir.exists() and incr_data_dir.is_dir():
+        if incr_data_dir.is_symlink():
+            incr_data_dir.unlink()
+        else:
+            shutil.rmtree(incr_data_dir)
+
+def merge_into(a: MutableMapping, b: Mapping):
+    for k, v in b.items():
+        if k not in a:
+            a[k] = v
+        elif v is None:
+            a.pop(k)
+        elif isinstance(v, Mapping) and isinstance(a[k], MutableMapping):
+            merge_into(a[k], v)
+        else:
+            a[k] = v
+
+def merge(*args):
+    result = dict()
+    for arg in args:
+        merge_into(result, arg)
+    return result
 
 def analyze_commit(analyzer_dir, gr : Git, repo_path, build_compdb, commit_hash, outdir, conf, extra_options):
     gr.checkout(commit_hash)
     conf_path = os.path.join(analyzer_dir, 'conf', conf + '.json')
 
     # print configuration
-    with open(outdir+'/config.out', "a+") as file:
+    with open(os.path.join(outdir, 'config.out'), "a+") as file:
         with open(conf_path, "r") as c:
             file.write("config: " + c.read())
             file.write("\n")
             file.write("added options:\n")
             for o in extra_options:
                 file.write(o + " ")
-            file.close()
 
     prepare_command = ['sh', os.path.join(analyzer_dir, 'scripts', build_compdb)]
+    # eprint(f"now run: cd {gr.path} && {shlex.join(prepare_command)} | tee {os.path.join(outdir, preparelog)}")
     with open(os.path.join(outdir, preparelog), "w+") as outfile:
         subprocess.run(prepare_command, cwd = gr.path, check=True, stdout=outfile, stderr=subprocess.STDOUT)
-        outfile.close()
 
     analyze_command = [os.path.join(analyzer_dir, 'goblint'), '--conf', os.path.join(analyzer_dir, 'conf', conf + '.json'), *extra_options, repo_path]
+    # eprint(f"now run: cd {Path.cwd()} && {shlex.join(analyze_command)} | tee {os.path.join(outdir, analyzerlog)}")
     with open(os.path.join(outdir, analyzerlog), "w+") as outfile:
         subprocess.run(analyze_command, check=True, stdout=outfile, stderr=subprocess.STDOUT)
-        outfile.close()
 
 def compare_runs(analyzer_dir, dummy_c_file, outdir, conf, compare_data_1, compare_data_2):
     options = ['--conf', os.path.join(analyzer_dir, 'conf', conf + '.json'), '--disable', 'printstats', '--disable', 'warn.warning', '--disable', 'warn.race', '--disable', 'dbg.compare_runs.diff', '--disable', 'dbg.compare_runs.eqsys', '--enable', 'dbg.compare_runs.node', '--compare_runs', compare_data_1, compare_data_2]
     analyze_command = [os.path.join(analyzer_dir, 'goblint'), *options, dummy_c_file]
     with open(os.path.join(outdir, comparelog), "w+") as outfile:
         subprocess.run(analyze_command, check=True, stdout=outfile, stderr=subprocess.STDOUT)
-        outfile.close()
 
 def calculateRelCLOC(repo_path, commit, diff_exclude):
     diff_exclude = list(map(lambda x: os.path.join(repo_path, x), diff_exclude))
@@ -93,20 +121,25 @@ def find_line(pattern, log):
         for line in file:
             m = re.search(pattern, line)
             if m:
-                file.close()
                 return m.groupdict()
         return None
 
 def extract_from_analyzer_log(log):
     runtime_pattern = 'TOTAL[ ]+(?P<runtime>[0-9\.]+) s'
     change_info_pattern = 'change_info = { unchanged = (?P<unchanged>[0-9]*); changed = (?P<changed>[0-9]*); added = (?P<added>[0-9]*); removed = (?P<removed>[0-9]*) }'
+    stats_pattern = r'vars\s*=\s*(?P<vars>\d+)\s+evals\s*=\s*(?P<evals>\d+)\s+narrow_reuses\s*=\s*(?P<narrow_reuses>\d+)'
     r = find_line(runtime_pattern, log)
-    ch = find_line(change_info_pattern, log) or {"unchanged": 0, "changed": 0, "added": 0, "removed": 0}
-    d = dict(list(r.items()) + list(ch.items()))
+    ch = find_line(change_info_pattern, log) or dict(unchanged=0, changed=0, added=0, removed=0)
+    st = find_line(stats_pattern, log) or dict(vars=0, evals=0, narrow_reuses=0)
+    d = dict()
+    for pd in (r, ch, st):
+        d.update(pd or dict())
     with open(log, "r") as file:
-        num_racewarnings = file.read().count('[Warning][Race]')
+        contents = file.read()
+        num_racewarnings = contents.count('[Warning][Race]')
         d["race_warnings"] = num_racewarnings
-        file.close()
+        d["completely_changed"] = contents.count("Completely changed function")
+        d["partially_changed"] = contents.count("Partially changed function")
     return d
 
 def extract_precision_from_compare_log(log):
