@@ -1,9 +1,10 @@
 import os
 import sys
 import shutil
+import stat
 from pathlib import Path
 import subprocess
-from pydriller import Git
+from pydriller import Git, Commit
 import re
 import pandas
 import json
@@ -14,6 +15,9 @@ import shlex
 import time
 from functools import wraps
 from collections.abc import MutableMapping, Mapping
+from contextlib import ExitStack
+from tempfile import NamedTemporaryFile
+from typing import List, Dict
 mpl.use("pgf")
 mpl.rcParams.update({
     "pgf.texsystem": "pdflatex",
@@ -37,9 +41,9 @@ header_runtime_incr_child = "Runtime for commit (incremental)"
 header_runtime_incr_posts_child = "Runtime for commit (incremental + incr postsolver)"
 header_runtime_incr_posts_rel_child = "Runtime for commit (incremental + incr postsolver + reluctant)"
 
-preparelog = "prepare.log"
-analyzerlog = "analyzer.log"
-comparelog = "compare.log"
+prepare_log = "prepare.log"
+analyzer_log = "analyzer.log"
+compare_log = "compare.log"
 
 
 @wraps(print)
@@ -70,28 +74,37 @@ def merge(*args):
         merge_into(result, arg)
     return result
 
-def analyze_commit(analyzer_dir, gr : Git, repo_path, build_compdb, commit_hash, outdir, conf, extra_options):
-    gr.checkout(commit_hash)
-    conf_path = os.path.join(analyzer_dir, 'conf', conf + '.json')
+def group(items, group_count):
+    done = 0
+    for i in range(group_count):
+        group_size = (len(items) // group_count) + (1 if i < len(items) % group_count else 0)
+        yield items[done : done + group_size]
+        done += group_size
 
-    # print configuration
-    with open(os.path.join(outdir, 'config.out'), "a+") as file:
-        with open(conf_path, "r") as c:
-            file.write("config: " + c.read())
+def analyze_commit(repository: Git, goblint_path: Path, build_compdb: Path, commit: Commit, out_dir: Path, configs: List[Dict]):
+    repository.checkout(commit.hash)
+
+    with (out_dir / "config_components.jsonlines").open("a+") as file:
+        for config in configs:
+            json.dump(config, file)
             file.write("\n")
-            file.write("added options:\n")
-            for o in extra_options:
-                file.write(o + " ")
 
-    prepare_command = ['sh', os.path.join(analyzer_dir, 'scripts', build_compdb)]
-    # eprint(f"now run: cd {gr.path} && {shlex.join(prepare_command)} | tee {os.path.join(outdir, preparelog)}")
-    with open(os.path.join(outdir, preparelog), "w+") as outfile:
-        subprocess.run(prepare_command, cwd = gr.path, check=True, stdout=outfile, stderr=subprocess.STDOUT)
+    with (out_dir / prepare_log).open("w+") as out_file:
+        build_compdb.chmod(build_compdb.stat().st_mode | stat.S_IEXEC)
+        subprocess.run([str(build_compdb)], cwd=repository.path, check=True, stdout=out_file, stderr=subprocess.STDOUT)
 
-    analyze_command = [os.path.join(analyzer_dir, 'goblint'), '--conf', os.path.join(analyzer_dir, 'conf', conf + '.json'), *extra_options, repo_path]
-    # eprint(f"now run: cd {Path.cwd()} && {shlex.join(analyze_command)} | tee {os.path.join(outdir, analyzerlog)}")
-    with open(os.path.join(outdir, analyzerlog), "w+") as outfile:
-        subprocess.run(analyze_command, check=True, stdout=outfile, stderr=subprocess.STDOUT)
+    analyze_command = [str(goblint_path)]
+    with ExitStack() as stack:
+        for config in configs:
+            config_file = stack.enter_context(NamedTemporaryFile(mode="w+"))
+            json.dump(config, config_file)
+            config_file.flush()
+            analyze_command.extend(("--conf", config_file.name))
+        # goblint can't print effective configuration and then run normally, so run once to dump config first
+        subprocess.run(analyze_command + ["--writeconf", str(out_dir / "config.json")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        analyze_command.append(str(repository.path))
+        with (out_dir / analyzer_log).open("w+") as out_file:
+            subprocess.run(analyze_command, check=True, stdout=out_file, stderr=subprocess.STDOUT)
 
 def compare_runs(analyzer_dir, dummy_c_file, outdir, conf, compare_data_1, compare_data_2):
     options = ['--conf', os.path.join(analyzer_dir, 'conf', conf + '.json'), '--disable', 'printstats', '--disable', 'warn.warning', '--disable', 'warn.race', '--disable', 'dbg.compare_runs.diff', '--disable', 'dbg.compare_runs.eqsys', '--enable', 'dbg.compare_runs.node', '--compare_runs', compare_data_1, compare_data_2]
@@ -104,7 +117,7 @@ def calculateRelCLOC(repo_path, commit, diff_exclude):
     relcloc = 0
     for f in commit.modified_files:
         _, extension = os.path.splitext(f.filename)
-        if not (extension == ".h" or extension == ".c"):
+        if extension not in (".h", ".c"):
             continue
         filepath = f.new_path
         if filepath is None:
@@ -127,12 +140,12 @@ def find_line(pattern, log):
 def extract_from_analyzer_log(log):
     runtime_pattern = 'TOTAL[ ]+(?P<runtime>[0-9\.]+) s'
     change_info_pattern = 'change_info = { unchanged = (?P<unchanged>[0-9]*); changed = (?P<changed>[0-9]*); added = (?P<added>[0-9]*); removed = (?P<removed>[0-9]*) }'
-    stats_pattern = r'vars\s*=\s*(?P<vars>\d+)\s+evals\s*=\s*(?P<evals>\d+)\s+narrow_reuses\s*=\s*(?P<narrow_reuses>\d+)'
+    # stats_pattern = r'vars\s*=\s*(?P<vars>\d+)\s+evals\s*=\s*(?P<evals>\d+)\s+narrow_reuses\s*=\s*(?P<narrow_reuses>\d+)'
     r = find_line(runtime_pattern, log)
     ch = find_line(change_info_pattern, log) or dict(unchanged=0, changed=0, added=0, removed=0)
-    st = find_line(stats_pattern, log) or dict(vars=0, evals=0, narrow_reuses=0)
+    # st = find_line(stats_pattern, log) or dict(vars=0, evals=0, narrow_reuses=0)
     d = dict()
-    for pd in (r, ch, st):
+    for pd in (r, ch):  #, st
         d.update(pd or dict())
     with open(log, "r") as file:
         contents = file.read()
@@ -141,6 +154,27 @@ def extract_from_analyzer_log(log):
         d["completely_changed"] = contents.count("Completely changed function")
         d["partially_changed"] = contents.count("Partially changed function")
     return d
+
+
+def with_file(path, mode, action, default=None):
+    try:
+        with open(path, mode) as file:
+            return action(file)
+    except FileNotFoundError:
+        return default
+
+
+def json_flatten(d):
+    return pandas.json_normalize(d).to_json(orient='records')[0]
+
+
+def flatten_timing(d, parents=(), join=".", drop_prefix=0):
+    path = (*parents, d["name"]) if not drop_prefix else parents
+    yield join.join((*path, "time")), d["time"]
+    yield join.join((*path, "call_count")), d["call_count"]
+    for child in d["children"]:
+        yield from flatten_timing(child, parents=path, drop_prefix=drop_prefix - 1 if drop_prefix > 0 else 0)
+
 
 def extract_precision_from_compare_log(log):
     pattern = "equal: (?P<equal>[0-9]+), more precise: (?P<moreprec>[0-9]+), less precise: (?P<lessprec>[0-9]+), incomparable: (?P<incomp>[0-9]+), total: (?P<total>[0-9]+)"
