@@ -156,7 +156,6 @@ let jobs () =
   | 0 -> Cpu.numcores ()
   | n -> n
 
-
 (** helpers for Pretty *)
 module Pretty = struct
   open Pretty
@@ -174,3 +173,13 @@ module Pretty = struct
   let pretty_tuple2 dcontent1 dcontent2 (x, y) =
     dprintf "(@[@[%a@],@?@[%a@]@])" (dcontent1 |> wrap) x (dcontent2 |> wrap) y
 end
+
+type timing_stats = Stats.t = {
+  name : string;
+  mutable time : float; (* In seconds *)
+  mutable ncalls : int [@key "call_count"];
+  mutable sub : timing_stats list [@key "children"];
+}
+[@@deriving to_yojson]
+
+let timing_json () = Stats.top |> timing_stats_to_yojson

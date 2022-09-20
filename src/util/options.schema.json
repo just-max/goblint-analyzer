@@ -1595,6 +1595,12 @@
           "type": "string",
           "default": ""
         },
+        "stats-json-out": {
+          "title": "dbg.stats-json-out",
+          "description": "Where to dump JSON output of timings and solver summary statistics",
+          "type": "string",
+          "default": ""
+        },
         "timeout": {
           "title": "dbg.timeout",
           "description":

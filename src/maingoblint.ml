@@ -407,6 +407,19 @@ let do_stats () =
     print_newline ();
     Stats.print (Messages.get_out "timing" Legacy.stderr) "Timings:\n";
     flush_all ()
+  );
+  let json_path = get_string "dbg.stats-json-out" in
+  if json_path <> "" then (
+    let json_stats : Yojson.Safe.t = `Assoc [
+      "solver", `Assoc [
+        "vars", `Int !Goblintutil.vars ;
+        "evals", `Int !Goblintutil.evals ;
+        "narrow_reuses", `Int !Goblintutil.narrow_reuses
+      ] ;
+      "timing", Goblintutil.timing_json ()
+    ]
+    in
+    File.with_file_out json_path (fun ch -> GobYojson.print ch json_stats)
   )
 
 let reset_stats () =
