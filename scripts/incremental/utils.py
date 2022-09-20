@@ -161,7 +161,9 @@ def with_file(path, mode, action, default=None):
         with open(path, mode) as file:
             return action(file)
     except FileNotFoundError:
-        return default
+        if default is not None:
+            return default
+        raise
 
 
 def json_flatten(d):
