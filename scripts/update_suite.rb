@@ -15,6 +15,9 @@ $timeout = 20 # seconds
 def puts(o) # puts is not atomic and messes up linebreaks with multiple threads
   print(o+"\n")
 end
+
+puts("gobobt: #{ENV['gobopt']}")
+
 # colors
 class String
   def indent(n=2); " "*n + self end
@@ -101,11 +104,18 @@ if report then
           "source-highlight" => lambda {|f,o| "source-highlight -n -i #{f} -o #{o}"},
           "pygmentize" => lambda {|f,o| "pygmentize -O full,linenos=1 -o #{o} #{f}"}
         }
-  cmds.each do |name, cmd|
-    # if `which #{cmd} 2> /dev/null`.empty? then
-    if ENV['PATH'].split(':').map {|f| File.executable? "#{f}/#{name}"}.include?(true) then
-      $highlighter = cmd
-      break
+  env_hl = ENV['HIGHLIGHTER']
+  if env_hl.eql?"none" then  # do nothing
+  elsif cmds.include?(env_hl) then
+    $highlighter = cmds[env_hl]
+  else
+    cmds.each do |name, cmd|
+      # if `which #{cmd} 2> /dev/null`.empty? then
+      if ENV['PATH'].split(':').map {|f| File.executable? "#{f}/#{name}"}.include?(true) then
+        $highlighter = cmd
+        puts "using '#{name}' as code highlighter"
+        break
+      end
     end
   end
   if $highlighter.nil? then
@@ -146,6 +156,8 @@ class Tests
         @vars = $1
         @evals = $2
       end
+      # source file location, like (01-foo.c:5:1-5:10)
+      # i is the index in the source file (which may be duplicated in completely different source files??? --> no, as there is only one source file for tests)
       next unless l =~ /(.*)\(.*?\:(\d+)(?:\:\d+)?(?:-(?:\d+)(?:\:\d+)?)?\)/
       obj,i = $1,$2.to_i
 
@@ -461,7 +473,9 @@ class ProjectIncr < Project
   end
 
   def compare_warnings
+    puts "before"
     testset.compare_warnings
+    puts "after"
     testset_incr.compare_warnings
   end
 
@@ -520,7 +534,7 @@ regs.sort.each do |d|
     next if not has_linux_headers and lines[0] =~ /kernel/
     if incremental then
       config_path = File.expand_path(f[0..-3] + ".json", grouppath)
-      params = if cfg then "--conf #{config_path} --set incremental.compare cfg" else "--conf #{config_path}" end
+      params = if cfg then "--conf #{config_path} --enable incremental.compare.by.cfg --disable incremental.compare.by.ast" else "--conf #{config_path}" end
     else
       lines[0] =~ /PARAM: (.*)$/
       if $1 then params = $1 else params = "" end
