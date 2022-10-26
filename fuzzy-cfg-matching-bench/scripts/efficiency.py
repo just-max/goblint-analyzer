@@ -15,14 +15,14 @@ from datetime import datetime
 import sys
 import pandas as pd
 from pathlib import Path
-from typing import Optional, List, Union
+from typing import Optional, List, Dict, Iterable, Any
 import argparse
 from argparseutils import SplittingArgumentParser, wrap_type, absolute_path, existing_file, json_from_file
 from urllib.parse import urlparse, urlunparse
 from dateutil.parser import parse as parse_date
 
 configurations = {}
-variations = []
+variations: List[Dict] = []
 build_compdb = None
 goblint_path = None
 diff_exclude = []
@@ -138,7 +138,7 @@ def filter_commits_false_pred(repo_path, diff_exclude, max_cloc):
     return pred
 
 
-def check_variations(variations):
+def check_variations(variations: Iterable):
     saved = set()
     for i, variation in enumerate(variations):
         if "name" not in variation:
@@ -160,7 +160,7 @@ def check_variations(variations):
                 saved.add(variation["name"])
 
 
-def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: List[Commit], process_id):
+def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: List[Commit], process_id: Any):
     task_marker_process = f"[{process_id}]"
     os.chdir(cwd)
     out_dir = cwd / "out"
@@ -171,40 +171,45 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
 
     eprint(f"{task_marker_process} process will handle {len(commits)} commit(s)")
 
-    for commit in commits:
+    for commit_n, commit in enumerate(commits, start=1):
+        failed = []
+
         out_try = out_dir / commit.hash
         parent = repository.get_commit(commit.parents[0])
 
-        task_marker_commit = f"[{process_id}:{commit.hash[:6]}]"
+        task_marker_commit = f"{process_id}:{commit.hash[:6]}"
 
-        failed = True
-        try:
-            for variation in variations:
-                task_marker_var = f"[{process_id}:{commit.hash[:6]}:{variation['name']}]"
-                eprint(f"{task_marker_var} variation = {json.dumps(variation)}")
+        for variation_n, variation in enumerate(variations):
+            task_marker_var = f"{task_marker_commit}:{variation['name']}"  # f"[{process_id}:{commit.hash[:6]}:{variation['name']}]"
+            eprint(f"[{task_marker_var}] variation = {json.dumps(variation)}")
 
-                commit_var = dict(parent=parent, child=commit)[variation.get("commit", "child")]
-                out_var = out_try / "variation" / variation["name"]
-                out_var.mkdir(parents=True)
+            commit_var = dict(parent=parent, child=commit)[variation.get("commit", "child")]
+            out_var = out_try / "variation" / variation["name"]
+            out_var.mkdir(parents=True)
 
-                eprint(f"{task_marker_var} on commit {commit_var.hash[:6]}")
+            eprint(
+                f"[{task_marker_var}] "
+                f"on commit {commit_var.hash[:6]} ({commit_n}/{len(commits)}), "
+                f"variation {variation['name']} ({variation_n}/{len(variations)})"
+            )
 
-                save: Optional[bool] = variation.get("incremental-save", False)
-                load: Optional[str] = variation.get("incremental-load", None)
+            save: Optional[bool] = variation.get("incremental-save", False)
+            load: Optional[str] = variation.get("incremental-load", None)
 
-                config_var = [configurations[k] for k in variation.get("configurations", ())]
+            config_var = [configurations[k] for k in variation.get("configurations", ())]
 
-                extra_config = dict(
-                    printstats=True,
-                    result="json",
-                    incremental=dict(load=bool(load), save=bool(save)),
-                    dbg={"stats-json-out": str(out_var / "stats.json")}
-                )
-                if load:
-                    extra_config["incremental"]["load-dir"] = str(out_try / "variation" / load / "incremental_data")
-                if save:
-                    extra_config["incremental"]["save-dir"] = str(out_var / "incremental_data")
+            extra_config = dict(
+                printstats=True,
+                result="json",
+                incremental=dict(load=bool(load), save=bool(save)),
+                dbg={"stats-json-out": str(out_var / "stats.json")}
+            )
+            if load:
+                extra_config["incremental"]["load-dir"] = str(out_try / "variation" / load / "incremental_data")
+            if save:
+                extra_config["incremental"]["save-dir"] = str(out_var / "incremental_data")
 
+            try:
                 utils.analyze_commit(
                     repository,
                     goblint_path,
@@ -213,32 +218,34 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
                     out_var,
                     config_var + [extra_config]
                 )
+            except subprocess.CalledProcessError as e:
+                eprint(
+                    f"[{task_marker_var}] aborted because command '{shlex.join(e.cmd)}' failed"
+                )
+                count_failed += 1
+                failed.append(variation)
+                continue
 
-                stats = with_file(out_var / "stats.json", "r", json.load, default={})
-                timing = dict(utils.flatten_timing(stats["timing"], parents=("timing",), drop_prefix=1)) if stats else {}
-                solver_stats = stats["solver"] if stats else {}
+            stats = with_file(out_var / "stats.json", "r", json.load, default={})
+            timing = dict(utils.flatten_timing(stats["timing"], parents=("timing",), drop_prefix=1)) if stats else {}
+            solver_stats = stats["solver"] if stats else {}
 
-                with (out_var / "data.json").open("w") as data_file:
-                    json.dump(
-                        dict(
-                            hash=commit.hash,
-                            variation=variation["name"],
-                            **utils.extract_from_analyzer_log(
-                                out_var / utils.analyzer_log
-                            ),
-                            **solver_stats,
-                            **timing,
+            with (out_var / "data.json").open("w") as data_file:
+                json.dump(
+                    dict(
+                        hash=commit.hash,
+                        variation=variation["name"],
+                        **utils.extract_from_analyzer_log(
+                            out_var / utils.analyzer_log
                         ),
-                        data_file
-                    )
+                        **solver_stats,
+                        **timing,
+                    ),
+                    data_file
+                )
 
             count_analyzed += 1
-            failed = False
-        except subprocess.CalledProcessError as e:
-            eprint(
-                f"{task_marker_commit} aborted because command '{shlex.join(e.cmd)}' failed"
-            )
-            count_failed += 1
+
         out_try.mkdir(exist_ok=True)
         with (out_try / "commit.json").open("w") as file:
             json.dump(
@@ -252,8 +259,8 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
                 file
             )
 
-    num_commits = count_analyzed + count_failed
-    eprint(f"{task_marker_process} process done, total={num_commits} analyzed={count_analyzed} failed={count_failed}")
+    num_analyses = count_analyzed + count_failed
+    eprint(f"{task_marker_process} process done, total={num_analyses} analyzed={count_analyzed} failed={count_failed}")
 
 
 def run_per_process(core, cwd, repository_source_dir, commits, process_id=None):
@@ -286,10 +293,10 @@ def analyze_chunks_of_commits_in_parallel(url, begin, end, result_dir, make_comm
 
         args = core_mapping[i], process_dir, repo_path, commits_process
         kwargs = dict(process_id=i)
-        # p = mp.Process(target=run_per_process, args=args, kwargs=kwargs)
-        # p.start()
-        # processes.append(p)
-        run_per_process(*args, **kwargs)
+        p = mp.Process(target=run_per_process, args=args, kwargs=kwargs)
+        p.start()
+        processes.append(p)
+        # run_per_process(*args, **kwargs)
 
     for p in processes:
         p.join()
@@ -377,3 +384,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# find result_efficiency/ -regextype egrep -regex '.*.json(lines)?' \
+# -exec bash -c 'printf "%s\n" "$1"; jq . < "$1" | sponge "$1"' -- {} \;

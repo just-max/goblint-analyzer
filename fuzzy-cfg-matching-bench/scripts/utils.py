@@ -129,13 +129,15 @@ def calculateRelCLOC(repo_path, commit, diff_exclude):
         relcloc = relcloc + f.added_lines + f.deleted_lines
     return relcloc
 
+
 def find_line(pattern, log):
-    with open (log, 'r') as file:
+    with open(log, 'r') as file:
         for line in file:
             m = re.search(pattern, line)
             if m:
                 return m.groupdict()
         return None
+
 
 def extract_from_analyzer_log(log):
     runtime_pattern = 'TOTAL[ ]+(?P<runtime>[0-9\.]+) s'

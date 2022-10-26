@@ -1,0 +1,176 @@
+[
+  {
+    "name": "parent",
+    "configurations": [
+      "base"
+    ],
+    "commit": "parent",
+    "incremental-save": true
+  },
+  {
+    "name": "child",
+    "configurations": [
+      "base"
+    ]
+  },
+  {
+    "name": "incremental.none",
+    "configurations": [
+      "base",
+      "incremental-base"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.cfg-diff",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-cfg-diff"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.cfg-diff.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-cfg-diff",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.cfg-forward",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-cfg-forward"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.cfg-forward.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-cfg-forward",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.cfg-forward.cfg-diff",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-cfg-forward",
+      "incremental-cfg-diff"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.cfg-forward.cfg-diff.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-cfg-forward",
+      "incremental-cfg-diff",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast.cfg-diff",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast",
+      "incremental-cfg-diff"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast.cfg-diff.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast",
+      "incremental-cfg-diff",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast.cfg-forward",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast",
+      "incremental-cfg-forward"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast.cfg-forward.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast",
+      "incremental-cfg-forward",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast.cfg-forward.cfg-diff",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast",
+      "incremental-cfg-forward",
+      "incremental-cfg-diff"
+    ],
+    "incremental-load": "parent"
+  },
+  {
+    "name": "incremental.ast.cfg-forward.cfg-diff.cfg-1-to-1",
+    "configurations": [
+      "base",
+      "incremental-base",
+      "incremental-ast",
+      "incremental-cfg-forward",
+      "incremental-cfg-diff",
+      "incremental-cfg-1-to-1"
+    ],
+    "incremental-load": "parent"
+  }
+]

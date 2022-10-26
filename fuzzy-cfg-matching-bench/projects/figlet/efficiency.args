@@ -1,0 +1,11 @@
+# argument file for efficiency batch tests on figlet,
+# use like 'efficiency.py @figlet.args <other arguments...>' from the figlet directory
+
+# repository link
+https://github.com/cmatsuoka/figlet.git
+
+# date range
+2011-01-12 2011-01-31
+
+--configurations common/configurations-incremental.json configurations.json
+--variations common/variations-incremental.json

@@ -1,0 +1,51 @@
+{
+  "incremental-base": {
+    "incremental": {
+      "compare": {
+        "by": {
+          "ast": false,
+          "cfg-forward": false,
+          "cfg-diff": false,
+          "cfg-1-to-1": false
+        }
+      }
+    }
+  },
+
+  "incremental-ast": {
+    "incremental": {
+      "compare": {
+        "by": {
+          "ast": true
+        }
+      }
+    }
+  },
+  "incremental-cfg-forward": {
+    "incremental": {
+      "compare": {
+        "by": {
+          "cfg-forward": true
+        }
+      }
+    }
+  },
+  "incremental-cfg-diff": {
+    "incremental": {
+      "compare": {
+        "by": {
+          "cfg-diff": true
+        }
+      }
+    }
+  },
+  "incremental-cfg-1-to-1": {
+    "incremental": {
+      "compare": {
+        "by": {
+          "cfg-1-to-1": true
+        }
+      }
+    }
+  }
+}
