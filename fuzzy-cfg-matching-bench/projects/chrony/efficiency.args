@@ -1,0 +1,11 @@
+# argument file for efficiency batch tests on chrony,
+# use like 'efficiency.py @efficiency.args <other arguments...>' from the chrony directory
+
+# repository link
+https://github.com/mlichvar/chrony.git
+
+# date range
+2021-09-01 2021-09-15
+
+--configurations common/configurations-incremental.json configurations.json
+--variations common/variations-incremental.json
