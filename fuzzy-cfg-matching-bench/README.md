@@ -30,8 +30,8 @@
 
     ```sh
     pip install virtualenv
-    virtualenv .
-    . bin/activate
+    virtualenv venv
+    . venv/bin/activate
     ```
 
 0. Install dependencies
