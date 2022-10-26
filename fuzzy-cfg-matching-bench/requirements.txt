@@ -5,3 +5,4 @@ pandas>=1.4.1
 psutil>=5.9.0
 PyDriller>=2.1
 pytz>=2021.1
+compiledb>=0.10
