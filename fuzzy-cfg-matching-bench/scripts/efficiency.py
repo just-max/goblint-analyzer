@@ -306,9 +306,7 @@ def run_per_process(core, cwd, repository_source_dir, commits, process_id=None):
     analyze_small_commits_in_repo(cwd, repository_source_dir, commits, process_id=process_id)
 
 
-def analyze_chunks_of_commits_in_parallel(url, begin, end, result_dir, make_commit_rejecter, core_mapping):
-    processes = []
-
+def analyze_make_chunks(url, begin, end, result_dir, make_commit_rejecter, core_mapping):
     repo_name = Path(url.path).stem
     repo_path = result_dir / repo_name
 
@@ -327,12 +325,24 @@ def analyze_chunks_of_commits_in_parallel(url, begin, end, result_dir, make_comm
     commits = [c for c in repo.traverse_commits() if not reject(c)]
 
     eprint(f"number of interesting commits: {len(commits)}")
+    chunks = list(zip(core_mapping, group(commits, len(core_mapping))))
+    tally = dict()
+    for _, chunk in chunks:
+        k = len(chunk)
+        tally[k] = tally.get(k, 0) + 1
+    eprint(", ".join(f"{n_cores} core(s) will each handle {n_commits} commit(s)" for n_commits, n_cores in tally.items()))
 
-    for i, commits_process in enumerate(group(commits, len(core_mapping))):
+    return repo_path, chunks
+
+
+def analyze_chunks_of_commits_in_parallel(repo_path, result_dir, chunks):
+    processes = []
+
+    for i, (core, commits_process) in enumerate(chunks):
         process_dir = result_dir / "process" / str(i)
         process_dir.mkdir(exist_ok=True, parents=True)
 
-        args = core_mapping[i], process_dir, repo_path, commits_process
+        args = core, process_dir, repo_path, commits_process
         kwargs = dict(process_id=i)
         p = mp.Process(target=run_per_process, args=args, kwargs=kwargs)
         p.start()
@@ -344,9 +354,9 @@ def analyze_chunks_of_commits_in_parallel(url, begin, end, result_dir, make_comm
 
 
 def collect_results(result_dir):
-    def iterdir_existing(dir):
+    def iterdir_existing(d):
         try:
-            yield from dir.iterdir()
+            yield from d.iterdir()
         except FileNotFoundError:
             yield from ()
 
@@ -389,6 +399,7 @@ def main():
     parser.add_argument("--max-cloc", type=int)
     parser.add_argument("-c", "--cores", type=int, nargs="+", default=[], action=Extend)
     parser.add_argument("--only-collect-results", action="store_true")
+    parser.add_argument("--only-show-distribution", action="store_true")
     parser.add_argument("-e", "--diff-exclude", nargs="+", default=[], action=Extend)
     parser.add_argument("-o", "--result-directory", type=absolute_path, default="result_efficiency")
 
@@ -419,7 +430,7 @@ def main():
         if parsed_args.restart and result_dir.exists():
             shutil.rmtree(result_dir)
         result_dir.mkdir(exist_ok=True)
-        analyze_chunks_of_commits_in_parallel(
+        repo_path, chunks = analyze_make_chunks(
             parsed_args.url,
             parsed_args.begin,
             parsed_args.end,
@@ -427,6 +438,9 @@ def main():
             lambda repo_dir: filter_commits_false_pred(repo_dir, parsed_args.diff_exclude, parsed_args.max_cloc),
             parsed_args.cores if parsed_args.cores else [0]
         )
+        if parsed_args.only_show_distribution:
+            return
+        analyze_chunks_of_commits_in_parallel(repo_path, result_dir, chunks)
     collect_results(result_dir)
 
 

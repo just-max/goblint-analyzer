@@ -22,6 +22,7 @@
 0. (Optional) Set the local python version with `pyenv`
 
     ```sh
+    apt install libbz2-dev  # or equivalent, needed for pandas
     pyenv install 3.8.10  # or later version
     pyenv local 3.8.10
     ```
@@ -29,7 +30,6 @@
 0. (Optional) Create a virtual environment with `virtualenv`
 
     ```sh
-    apt install libbz2-dev  # or equivalent, needed for pandas
     pip install virtualenv
     virtualenv venv
     . venv/bin/activate
