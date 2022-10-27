@@ -173,7 +173,9 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
     out_dir = cwd / "out"
     count_analyzed = 0
     count_failed = 0
-    repo_path = shutil.copytree(repo_source_dir, cwd / "repository")
+    repo_path = cwd / "repository"
+    if not repo_path.is_dir():
+        shutil.copytree(repo_source_dir, cwd / "repository")
     repository = Git(repo_path)
 
     eprint(f"{task_marker_process} process will handle {len(commits)} commit(s)")
@@ -186,13 +188,28 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
 
         task_marker_commit = f"{process_id}:{commit.hash[:6]}"
 
-        for variation_n, variation in enumerate(variations):
-            task_marker_var = f"{task_marker_commit}:{variation['name']}"  # f"[{process_id}:{commit.hash[:6]}:{variation['name']}]"
+        for variation_n, variation in enumerate(variations, start=1):
+            task_marker_var = f"{task_marker_commit}:{variation['name']}"
             eprint(f"[{task_marker_var}] variation = {json.dumps(variation)}")
 
-            commit_var = dict(parent=parent, child=commit)[variation.get("commit", "child")]
             out_var = out_try / "variation" / variation["name"]
+
+            prev_failed, prev_done = ((out_var / marker).exists() for marker in (".failed", ".done"))
+            if prev_failed or prev_done:
+                if prev_failed:
+                    failed.append(variation)
+                eprint(f"[{task_marker_var}] skipped already-analyzed variation, "
+                        f"which {'failed' if prev_failed else 'completed successfully'} during previous run")
+                continue
+
+            # remove existing results (could happen if something went really wrong)
+            try:
+                shutil.rmtree(out_var)
+            except FileNotFoundError:
+                pass
             out_var.mkdir(parents=True)
+
+            commit_var = dict(parent=parent, child=commit)[variation.get("commit", "child")]
 
             eprint(
                 f"[{task_marker_var}] "
@@ -216,6 +233,12 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
             if save:
                 extra_config["incremental"]["save-dir"] = str(out_var / "incremental_data")
 
+            def cleanup_var():
+                try:
+                    (out_var / utils.analyzer_log).unlink()
+                except FileNotFoundError:
+                    pass
+
             try:
                 utils.analyze_commit(
                     repository,
@@ -229,8 +252,11 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
                 eprint(
                     f"[{task_marker_var}] aborted because command '{_shlex_join(e.cmd)}' failed"
                 )
+                (out_var / ".failed").touch()
                 count_failed += 1
                 failed.append(variation)
+
+                cleanup_var()
                 continue
 
             stats = with_file(out_var / "stats.json", "r", json.load, default={})
@@ -251,7 +277,12 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
                     data_file
                 )
 
+            (out_var / ".done").touch()
             count_analyzed += 1
+            eprint(f"[{task_marker_var}] completed successfully")
+
+            cleanup_var()
+
 
         out_try.mkdir(exist_ok=True)
         with (out_try / "commit.json").open("w") as file:
@@ -279,16 +310,19 @@ def analyze_chunks_of_commits_in_parallel(url, begin, end, result_dir, make_comm
     processes = []
 
     repo_name = Path(url.path).stem
+    repo_path = result_dir / repo_name
+
+    repo_exists = repo_path.is_dir()
+
     # calculate actual interesting commits up-front to allow for similar load distribution
     repo = Repository(
-        urlunparse(url),
+        urlunparse(url) if not repo_exists else str(repo_path),
         since=begin,
         to=end,
         only_no_merge=True,
         only_modifications_with_file_types=[".c", ".h"],
-        clone_repo_to=result_dir
+        **dict(clone_repo_to=result_dir) if not repo_exists else {}
     )
-    repo_path = result_dir / repo_name
     reject = make_commit_rejecter(result_dir / repo_name)
     commits = [c for c in repo.traverse_commits() if not reject(c)]
 
@@ -296,7 +330,7 @@ def analyze_chunks_of_commits_in_parallel(url, begin, end, result_dir, make_comm
 
     for i, commits_process in enumerate(group(commits, len(core_mapping))):
         process_dir = result_dir / "process" / str(i)
-        process_dir.mkdir(parents=True)
+        process_dir.mkdir(exist_ok=True, parents=True)
 
         args = core_mapping[i], process_dir, repo_path, commits_process
         kwargs = dict(process_id=i)
@@ -310,11 +344,17 @@ def analyze_chunks_of_commits_in_parallel(url, begin, end, result_dir, make_comm
 
 
 def collect_results(result_dir):
+    def iterdir_existing(dir):
+        try:
+            yield from dir.iterdir()
+        except FileNotFoundError:
+            yield from ()
+
     data_paths = (
         variation_dir / "data.json"
-        for proc_dir in (result_dir / "process").iterdir()
-        for commit_dir in (proc_dir / "out").iterdir()
-        for variation_dir in (commit_dir / "variation").iterdir() if variation_dir.is_dir()
+        for proc_dir in iterdir_existing(result_dir / "process")
+        for commit_dir in iterdir_existing(proc_dir / "out")
+        for variation_dir in iterdir_existing(commit_dir / "variation") if variation_dir.is_dir()
     )
     results = []
     for data_path in data_paths:
@@ -376,9 +416,9 @@ def main():
 
     result_dir = parsed_args.result_directory
     if not parsed_args.only_collect_results:
-        if result_dir.exists():
+        if parsed_args.restart and result_dir.exists():
             shutil.rmtree(result_dir)
-        os.mkdir(result_dir)
+        result_dir.mkdir(exist_ok=True)
         analyze_chunks_of_commits_in_parallel(
             parsed_args.url,
             parsed_args.begin,
