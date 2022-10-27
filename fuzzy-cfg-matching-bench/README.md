@@ -52,6 +52,14 @@
 
     Adjust the list of CPU cores (`0 1 2 3`) as appropriate (see `efficiency.py --help` and source code).
 
+    For many cores, try using `seq`, e.g.
+
+    ```sh
+    seq 0 63 | xargs python ... --cores
+    ```
+
+    to run on cores 0 through 63.
+
 0. The script can be stopped with `SIGINT` (Ctrl+C/`KeyboardInterrupt`). Progress in running analyses is lost, but starting the script **with the same arguments** again will not redo completed or failed runs. Using different arguments will break in unexpected ways; pass `--restart` or delete the output directory to start from the beginning.
 
 0. (Optional) With `jq` and `sponge` installed (e.g. `apt install jq moreutils`), clean up intermediate `json` files for viewing.
