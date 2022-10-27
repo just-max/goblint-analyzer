@@ -306,7 +306,7 @@ def run_per_process(core, cwd, repository_source_dir, commits, process_id=None):
     analyze_small_commits_in_repo(cwd, repository_source_dir, commits, process_id=process_id)
 
 
-def analyze_make_chunks(url, begin, end, result_dir, make_commit_rejecter, core_mapping):
+def analyze_make_chunks(url, begin, end, result_dir, make_commit_rejecter, core_mapping, batch_size, batch_index):
     repo_name = Path(url.path).stem
     repo_path = result_dir / repo_name
 
@@ -325,11 +325,21 @@ def analyze_make_chunks(url, begin, end, result_dir, make_commit_rejecter, core_
     commits = [c for c in repo.traverse_commits() if not reject(c)]
 
     eprint(f"number of interesting commits: {len(commits)}")
-    chunks = list(zip(core_mapping, group(commits, len(core_mapping))))
+
+    if batch_size != 0:
+        commits_per_batch = len(core_mapping) * batch_size
+        first_commit_i = commits_per_batch * batch_index
+        batch = commits[first_commit_i:first_commit_i + commits_per_batch]
+        eprint(f"number of commits in batch: {len(batch)}")
+    else:
+        batch = commits
+
+    chunks = list(zip(core_mapping, group(batch, len(core_mapping))))
     tally = dict()
-    for _, chunk in chunks:
-        k = len(chunk)
-        tally[k] = tally.get(k, 0) + 1
+    for core, chunk in chunks:
+        eprint(f"[{core}] {', '.join(c.hash[:6] for c in chunk)}")
+        chunk_size = len(chunk)
+        tally[chunk_size] = tally.get(chunk_size, 0) + 1
     eprint(", ".join(f"{n_cores} core(s) will each handle {n_commits} commit(s)" for n_commits, n_cores in tally.items()))
 
     return repo_path, chunks
@@ -393,6 +403,11 @@ def main():
                              "configurations reference the config IDs defined in the configuration argument; "
                              "see 'check_variations' in source of efficiency.py; "
                              "multiple variation lists are joined")
+    parser.add_argument("--batch-size", type=int, default=0,
+                        help="maximum number of commits to run per core, 0 for unlimited")
+    parser.add_argument("--batch-index", type=int, default=0,
+                        help="with --batch-size N --batch-index i, "
+                             "run not the first N commits, but offset to the (i*N)th commit")
     parser.add_argument("--restart", action="store_true",
                         help="Remove the existing (partial) results before starting.")
 
@@ -436,7 +451,9 @@ def main():
             parsed_args.end,
             result_dir,
             lambda repo_dir: filter_commits_false_pred(repo_dir, parsed_args.diff_exclude, parsed_args.max_cloc),
-            parsed_args.cores if parsed_args.cores else [0]
+            parsed_args.cores if parsed_args.cores else [0],
+            parsed_args.batch_size,
+            parsed_args.batch_index
         )
         if parsed_args.only_show_distribution:
             return

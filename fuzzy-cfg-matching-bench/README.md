@@ -47,10 +47,12 @@
     cd projects/figlet
     python ../../scripts/efficiency.py @efficiency.args \
       --analyzer ../../../goblint \
+      --batch-size 4 --batch-index 0 \
       --cores 0 1 2 3
     ```
 
     Adjust the list of CPU cores (`0 1 2 3`) as appropriate (see `efficiency.py --help` and source code).
+    Batch size controls the number of analyzed commits per core, batch index controls which batch to run.
 
     For many cores, try using `seq`, e.g.
 
