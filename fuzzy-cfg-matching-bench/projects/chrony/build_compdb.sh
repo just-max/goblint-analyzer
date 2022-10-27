@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export LC_ALL=C.UTF-8
+git clean -fdx
 ./configure
-make clean
-compiledb make -j 1
+make -j 1 chronyd | tee build.log
+compiledb --parse build.log

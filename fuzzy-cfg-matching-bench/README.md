@@ -29,6 +29,7 @@
 0. (Optional) Create a virtual environment with `virtualenv`
 
     ```sh
+    apt install libbz2-dev  # or equivalent, needed for pandas
     pip install virtualenv
     virtualenv venv
     . venv/bin/activate

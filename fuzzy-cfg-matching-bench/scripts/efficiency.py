@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Iterable, Any
 import argparse
 from argparseutils import SplittingArgumentParser, wrap_type, absolute_path, existing_file, json_from_file
+from argparseutils import ExtendAction as Extend
 from urllib.parse import urlparse, urlunparse
 from dateutil.parser import parse as parse_date
 
@@ -130,6 +131,12 @@ diff_exclude = []
 ################################################################################
 
 
+# from Python 3.8
+def _shlex_join(split_command):
+    """Return a shell-escaped string from *split_command*."""
+    return ' '.join(shlex.quote(arg) for arg in split_command)
+
+
 def filter_commits_false_pred(repo_path, diff_exclude, max_cloc):
     def pred(c: Commit):
         rel_cloc = utils.calculateRelCLOC(str(repo_path), c, diff_exclude)
@@ -220,7 +227,7 @@ def analyze_small_commits_in_repo(cwd: Path, repo_source_dir: Path, commits: Lis
                 )
             except subprocess.CalledProcessError as e:
                 eprint(
-                    f"[{task_marker_var}] aborted because command '{shlex.join(e.cmd)}' failed"
+                    f"[{task_marker_var}] aborted because command '{_shlex_join(e.cmd)}' failed"
                 )
                 count_failed += 1
                 failed.append(variation)
@@ -329,21 +336,22 @@ def main():
     parser.add_argument("--analyzer", type=existing_file, default=shutil.which("goblint"),
                         help="path to goblint, default 'goblint' on path")
 
-    parser.add_argument("--configurations", type=json_from_file, nargs="+", default=[], action="extend",
+    parser.add_argument("--configurations", type=json_from_file, nargs="+", default=[], action=Extend,
                         help="a mapping {config id -> goblint config}; multiple mappings are joined")
-    parser.add_argument("--variations", type=json_from_file, nargs="+", default=[], action="extend",
+    parser.add_argument("--variations", type=json_from_file, nargs="+", default=[], action=Extend,
                         help="list of variations; each variation is run for each commit, "
                              "configurations reference the config IDs defined in the configuration argument; "
                              "see 'check_variations' in source of efficiency.py; "
                              "multiple variation lists are joined")
+    parser.add_argument("--restart", action="store_true",
+                        help="Remove the existing (partial) results before starting.")
 
     parser.add_argument("--max-cloc", type=int)
-    parser.add_argument("-c", "--cores", type=int, nargs="+", default=[], action="extend")
+    parser.add_argument("-c", "--cores", type=int, nargs="+", default=[], action=Extend)
     parser.add_argument("--only-collect-results", action="store_true")
-    parser.add_argument("-e", "--diff-exclude", nargs="+", default=[], action="extend")
+    parser.add_argument("-e", "--diff-exclude", nargs="+", default=[], action=Extend)
     parser.add_argument("-o", "--result-directory", type=absolute_path, default="result_efficiency")
 
-    # global parsed_args
     parsed_args = parser.parse_args()
 
     if parsed_args.analyzer is None:
