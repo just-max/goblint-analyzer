@@ -14,14 +14,6 @@
     ]
   },
   {
-    "name": "incremental.none",
-    "configurations": [
-      "base",
-      "incremental-base"
-    ],
-    "incremental-load": "parent"
-  },
-  {
     "name": "incremental.cfg-1-to-1",
     "configurations": [
       "base",
