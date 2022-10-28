@@ -5,7 +5,10 @@
 https://github.com/mlichvar/chrony.git
 
 # date range
-2021-09-01 2022-09-30
+2012-09-01 2022-09-30
+
+# exclude directories that don't contain interesting changes
+--diff-exclude contrib/ doc/ examples/ test/
 
 --configurations common/configurations-incremental.json configurations.json
 --variations common/variations-incremental.json

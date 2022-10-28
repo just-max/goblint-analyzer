@@ -312,6 +312,7 @@ def analyze_make_chunks(url, begin, end, result_dir, make_commit_rejecter, core_
 
     repo_exists = repo_path.is_dir()
 
+    eprint("loading repository")
     # calculate actual interesting commits up-front to allow for similar load distribution
     repo = Repository(
         urlunparse(url) if not repo_exists else str(repo_path),
@@ -443,6 +444,7 @@ def main():
     result_dir = parsed_args.result_directory
     if not parsed_args.only_collect_results:
         if parsed_args.restart and result_dir.exists():
+            eprint("removing existing results")
             shutil.rmtree(result_dir)
         result_dir.mkdir(exist_ok=True)
         repo_path, chunks = analyze_make_chunks(
