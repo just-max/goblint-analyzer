@@ -117,9 +117,6 @@ type _ t =
   | IterSysVars: VarQuery.t * Obj.t VarQuery.f -> Unit.t t (** [iter_vars] for [Constraints.FromSpec]. [Obj.t] represents [Spec.V.t]. *)
   | MayAccessed: AccessDomain.EventSet.t t
   | MayBeTainted: LS.t t
-  | MustBeDead: MustBool.t t (* Code at node must be dead. Only answered in code transforms. *)
-  (* TODO: is this really a good idea? the query isn't really even on a node, unless the query only applies to FunctionEntry/Function *)
-  | MustBeUncalled: MustBool.t t (* Function is never called. Only answered in code transforms. *)
 
 type 'a result = 'a
 
@@ -173,8 +170,6 @@ struct
     | IterSysVars _ -> (module Unit)
     | MayAccessed -> (module AccessDomain.EventSet)
     | MayBeTainted -> (module LS)
-    | MustBeDead -> (module MustBool)
-    | MustBeUncalled -> (module MustBool)
 
   (** Get bottom result for query. *)
   let bot (type a) (q: a t): a result =
@@ -227,8 +222,6 @@ struct
     | IterSysVars _ -> Unit.top ()
     | MayAccessed -> AccessDomain.EventSet.top ()
     | MayBeTainted -> LS.top ()
-    | MustBeDead -> MustBool.top ()
-    | MustBeUncalled -> MustBool.top ()
 end
 
 (* The type any_query can't be directly defined in Any as t,
@@ -278,8 +271,6 @@ struct
     | Any (MustProtectedVars _) -> 39
     | Any MayAccessed -> 40
     | Any MayBeTainted -> 41
-    | Any MustBeDead -> 42
-    | Any MustBeUncalled -> 43
 
   let compare a b =
     let r = Stdlib.compare (order a) (order b) in
@@ -387,8 +378,6 @@ struct
     | Any (InvariantGlobal i) -> Pretty.dprintf "InvariantGlobal _"
     | Any MayAccessed -> Pretty.dprintf "MayAccessed"
     | Any MayBeTainted -> Pretty.dprintf "MayBeTainted"
-    | Any MustBeDead -> Pretty.dprintf "MustBeDead"
-    | Any MustBeUncalled -> Pretty.dprintf "MustBeUncalled"
 end
 
 
