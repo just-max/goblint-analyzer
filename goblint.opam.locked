@@ -128,7 +128,7 @@ conflicts: [
 pin-depends: [
   [
     "goblint-cil.2.0.1"
-    "git+https://github.com/goblint/cil.git#6137a35a88dbe16c29e77d0138f7f2ae117d228d"
+    "git+https://github.com/goblint/cil.git#TODO"
   ]
   [
     "apron.v0.9.13"
