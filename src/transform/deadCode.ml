@@ -52,11 +52,11 @@ module RemoveDeadCode : Transform.S = struct
     (* step 2: remove globals that are (transitively) unreferenced by live functions
        - dead functions: removed by answering 'false' for isRoot
        - unreferenced globals and types: removeUnusedTemps keeps only globals referenced by live functions *)
-    let open GoblintCil.Rmtmps in
+    let open GoblintCil.RmUnused in
     let keepUnused0 = !keepUnused in
     Fun.protect ~finally:(fun () -> keepUnused := keepUnused0) (fun () ->
       keepUnused := false;
-      removeUnusedTemps ~isRoot:(function GFun (fd, _) -> fundec_live fd | _ -> false) file
+      removeUnused ~isRoot:(function GFun (fd, _) -> fundec_live fd | _ -> false) file
     )
 
   let name = "remove_dead_code"
