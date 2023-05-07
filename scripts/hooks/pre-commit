@@ -10,31 +10,41 @@
 #
 # To enable this hook, rename this file to "pre-commit".
 
-if git rev-parse --verify HEAD >/dev/null 2>&1
-then
-	against=HEAD
-else
-	# Initial commit: diff against an empty tree object
-	against=4b825dc642cb6eb9a060e54bf8d69288fbee4904
-fi
+# Redirect output to stderr.
+exec 1>&2
+
+# HEAD, or else the special empty tree object
+head_ref="$(git rev-parse --verify HEAD^'{commit}')" \
+  || head_ref="$(git mktree < /dev/null)"
+
+# TODO: could also default to HEAD^1 to only show changes since last commit by default (e.g. during local development)
+base_name="${BASE_REF:-master}"
+base_ref="$(git rev-parse --verify "$base_name"^'{commit}')" \
+  || { echo "invalid base reference: $base_name"; exit 1; }
+
+against="$(git merge-base "$base_ref" "$head_ref")"
+
+# --- TODO ---
+echo "TODO: does github set BASE_REF how I want it to?"
+declare -p BASE_REF
+# --- ODOT ---
+
+echo "ocp-indent: comparing against $against"
 
 # If you want to allow non-ASCII filenames set this variable to true.
 allownonascii=$(git config --bool hooks.allownonascii)
-
-# Redirect output to stderr.
-exec 1>&2
 
 # Cross platform projects tend to avoid non-ASCII filenames; prevent
 # them from being added to the repository. We exploit the fact that the
 # printable range starts at the space character and ends with tilde.
 if [ "$allownonascii" != "true" ] &&
-	# Note that the use of brackets around a tr range is ok here, (it's
-	# even required, for portability to Solaris 10's /usr/bin/tr), since
-	# the square bracket bytes happen to fall in the designated range.
-	test $(git diff --cached --name-only --diff-filter=A -z $against |
-	  LC_ALL=C tr -d '[ -~]\0' | wc -c) != 0
+  # Note that the use of brackets around a tr range is ok here, (it's
+  # even required, for portability to Solaris 10's /usr/bin/tr), since
+  # the square bracket bytes happen to fall in the designated range.
+  test "$(git diff --cached --name-only --diff-filter=A -z "$against" |
+    LC_ALL=C tr -d '[ -~]\0' | wc -c)" != 0
 then
-	cat <<\EOF
+  cat <<\EOF
 Error: Attempt to add a non-ASCII file name.
 
 This can cause problems if you want to work with people on other platforms.
@@ -45,35 +55,54 @@ If you know what you are doing you can disable this check using:
 
   git config hooks.allownonascii true
 EOF
-	exit 1
+  exit 1
 fi
 
 # If there are whitespace errors, print the offending file names and fail.
 # Exclude *.patch from the check, as they may contain meaningful whitespace.
-git diff-index --check --cached $against -- '!*.patch' || exit 1
+git diff-index --check --cached "$against" -- '!*.patch' || exit 1
 
 # Check indentation for OCaml files
 # Before we checked diff <(git show :%) <(git show :% | ocp-indent)
 # but that also complains about misindented code that is not touched by the current commit.
 # Now we only check the diff between the changes and the changes run through ocp-indent.
 # See https://github.com/goblint/analyzer/issues/236
-fail="false"
-for f in $(git diff --cached --name-only | grep -E ".*\.mli?$"); do
-  # echo "Checking $f"
-  # diff <(diff <(git show HEAD:$f) <(git show :$f)) <(diff <(git show HEAD:$f | ocp-indent) <(git show :$f | ocp-indent)) | sed "/^</d" | sed "s/^> //" || (echo "Problems in $f"; false)
-  for l in $(git diff --cached -U0 -- $f | sed -n "s/^@@ -[^ ]* +\([^ ]*\) @@.*/\1/p"); do # macOS's sed does not support \S (`brew install gnu-sed` does), changed from: sed -n "s/^@@ -\S* +\(\S*\) @@.*/\1/p")
-    a=$(echo $l | cut -d',' -f1)
-    b=$(echo $l | cut -d',' -f2)
+fail=false
+{
+  tmpfile1="$(mktemp ./pre-commit.patchXXXXXX)" &&\
+  tmpfile2="$(mktemp ./pre-commit.patchXXXXXX)" &&\
+  tmpfile3="$(mktemp ./pre-commit.patchXXXXXX)"
+} || exit 1
+combine_diffs=("$(which interdiff)" -U3) || combine_diffs=(cat)
+
+# --- TODO ---
+echo "TODO: does the CI system have interdiff?"
+declare -p combine_diffs
+# --- ODOT
+
+for f in $(git diff --cached --name-only "$against" | grep -E ".*\.mli?$"); do
+  : > "$tmpfile1"
+  file_fail=false
+  for l in $(git diff --cached -U0 "$against" -- "$f" | sed -n "s/^@@ -[^ ]* +\([^ ]*\) @@.*/\1/p"); do # macOS's sed does not support \S (`brew install gnu-sed` does), changed from: sed -n "s/^@@ -\S* +\(\S*\) @@.*/\1/p")
+    a=$(echo "$l" | cut -d',' -f1)
+    b=$(echo "$l" | cut -d',' -f2)
     if [ "$a" = "$b" ]; then
       lines=$a
     else
-      b=$(expr $a + $b - 1)
+      b=$((a + b - 1))
       lines="$a-$b"
     fi
-    echo "ocp-indent file: $f, lines: $lines"
-    [[ $lines -eq "0" ]] || diff $f <(ocp-indent --lines=$lines $f) || fail="true"
+    # echo "ocp-indent file: $f, lines: $lines"
+    if [[ "$lines" -ne "0" ]]; then
+      diff -U3 "$f" <(ocp-indent --lines="$lines" "$f") > "$tmpfile2" || { file_fail=true; fail=true; }
+      "${combine_diffs[@]}" "$tmpfile1" "$tmpfile2" > "$tmpfile3"
+      cat "$tmpfile3" > "$tmpfile1"
+    fi
   done
+  printf 'ocp-indent: %s' "$f"; [[ $file_fail = false ]] && echo ": OK" || echo
+  cat "$tmpfile1"
 done
+rm -f "$tmpfile1" "$tmpfile2" "$tmpfile3"
 if [ "$fail" == "true" ]; then
   echo
   echo "You shall not commit! ocp-indent complains about the indentation of your changes (see diffs above). Please fix! You can bypass this check with git commit -n."
