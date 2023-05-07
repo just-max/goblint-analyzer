@@ -19,6 +19,9 @@ head_ref="$(git rev-parse --verify HEAD^'{commit}')" \
 
 # TODO: could also default to HEAD^1 to only show changes since last commit by default (e.g. during local development)
 base_name="${BASE_REF:-master}"
+declare -p base_name
+echo 'git rev-parse --verify "$base_name":'
+git rev-parse --verify "$base_name"
 base_ref="$(git rev-parse --verify "$base_name"^'{commit}')" \
   || { echo "invalid base reference: $base_name"; exit 1; }
 
