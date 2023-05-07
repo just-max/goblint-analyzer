@@ -21,7 +21,7 @@ head_ref="$(git rev-parse --verify HEAD^'{commit}')" \
 base_name="${BASE_REF:-master}"
 declare -p base_name
 echo 'git rev-parse --verify "$base_name":'
-git rev-parse --verify "$base_name"
+git rev-parse "$base_name"
 base_ref="$(git rev-parse --verify "$base_name"^'{commit}')" \
   || { echo "invalid base reference: $base_name"; exit 1; }
 
