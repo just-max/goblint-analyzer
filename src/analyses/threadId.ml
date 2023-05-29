@@ -5,6 +5,7 @@ module LF = LibraryFunctions
 open Batteries
 open Analyses
 open GobList.Syntax
+open GoblintCil
 
 module Thread = ThreadIdDomain.Thread
 module ThreadLifted = ThreadIdDomain.ThreadLifted
@@ -99,8 +100,9 @@ struct
 
   let threadspawn ctx lval f args fctx =
     let (current, td) = ctx.local in
-    let node, index = indexed_node_for_ctx fctx in
-    (current, Thread.threadspawn td node index f)
+    (current,
+    match fctx.local with `Lifted t, _ ->
+      Thread.threadspawn td t | _ -> failwith "ThreadId.threadspawn")
 
   type marshal = (Thread.t,unit) Hashtbl.t (* TODO: don't use polymorphic Hashtbl *)
   let init (m:marshal option): unit =
